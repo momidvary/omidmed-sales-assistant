@@ -156,6 +156,19 @@ button { border: 0; }
 .profile strong, .profile span { display: block; }
 .profile strong { font-size: 12px; margin-bottom: 5px; }
 .profile span { color: var(--muted); font-size: 10px; }
+.profile-details { min-width: 0; }
+.signout-button {
+  border: 1px solid #d8e5e3;
+  border-radius: 9px;
+  padding: 7px 10px;
+  color: #5e7572;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.signout-button:hover { border-color: #bdcfcc; color: #244e49; }
 
 .hero-card {
   min-height: 185px;

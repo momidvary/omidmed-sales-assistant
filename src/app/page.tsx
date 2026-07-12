@@ -73,10 +73,13 @@ export default function Home() {
           </div>
           <div className="profile">
             <div className="avatar">م</div>
-            <div>
+            <div className="profile-details">
               <strong>محمد امیدواری</strong>
               <span>مدیر فروش امیدمِد</span>
             </div>
+            <form action="/auth/signout" method="post">
+              <button className="signout-button" type="submit">خروج</button>
+            </form>
           </div>
         </header>
 
