@@ -376,3 +376,22 @@ button { border: 0; }
   .hero-card { align-items: flex-start; flex-direction: column; }
   .stats-grid { grid-template-columns: 1fr; }
 }
+
+.nav-item { text-decoration: none; }
+.nav-item.disabled { opacity: .45; cursor: not-allowed; }
+.topbar-subtitle { margin: 8px 0 0; color: var(--muted); font-size: 10px; }
+.primary-button { text-decoration: none; cursor: pointer; }
+.text-link { color: var(--primary); text-decoration: none; font-size: 10px; font-weight: 700; }
+.compact-value { font-size: 18px !important; overflow-wrap: anywhere; }
+.mini-customer-list { display: grid; margin-top: 12px; }
+.mini-customer { min-height: 51px; display: grid; grid-template-columns: 31px minmax(0,1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid #edf2f1; }
+.mini-customer:last-child { border-bottom: 0; }
+.mini-customer .rank { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 8px; background: var(--surface-soft); color: var(--primary); font-size: 9px; font-weight: 800; }
+.mini-customer strong, .mini-customer small { display: block; }
+.mini-customer strong { font-size: 10px; margin-bottom: 4px; }
+.mini-customer small { color: var(--muted); font-size: 8px; }
+.mini-customer b { font-size: 9px; color: #425b57; }
+.roadmap-list { display: grid; gap: 10px; margin-top: 19px; }
+.roadmap-item { min-height: 43px; padding: 0 12px; display: flex; align-items: center; gap: 9px; border: 1px solid #e4ecea; border-radius: 11px; color: #73837f; font-size: 10px; }
+.roadmap-item.done { background: #eef8f5; border-color: #d2ebe3; color: #26735f; }
+.roadmap-item.current { background: #fff7e5; border-color: #f1dfb9; color: #87621d; }
