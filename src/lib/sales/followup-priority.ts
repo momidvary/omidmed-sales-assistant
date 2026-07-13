@@ -230,7 +230,7 @@ export function makeAutomaticNextFollowup(
 ) {
   const delayByOutcome: Record<string, number | null> = {
     no_answer: 1,
-    requested_price: 3,
+    requested_price: 1,
     no_need: 30,
     order_placed: null,
   };
