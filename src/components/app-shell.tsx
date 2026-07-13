@@ -41,7 +41,7 @@ const menu = [
   { label: "ورود اطلاعات", icon: "upload" as const, href: "/import", key: "import" },
   { label: "پیگیری‌ها", icon: "followup" as const, key: "followups" },
   { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
-  { label: "گزارش‌ها", icon: "report" as const, key: "reports" },
+  { label: "گزارش‌ها", icon: "report" as const, href: "/reports", key: "reports" },
 ];
 
 export default function AppShell({
@@ -70,7 +70,6 @@ export default function AppShell({
             <span>دستیار فروش شخصی</span>
           </div>
         </div>
-
         <nav className="nav" aria-label="منوی اصلی">
           {menu.map((item) => {
             const className = `nav-item ${active === item.key ? "active" : ""} ${!item.href ? "disabled" : ""}`;
@@ -90,7 +89,6 @@ export default function AppShell({
             );
           })}
         </nav>
-
         <div className="sidebar-status">
           <span className="status-dot" />
           <div>
