@@ -40,7 +40,7 @@ const menu = [
   { label: "مشتریان", icon: "users" as const, href: "/customers", key: "customers" },
   { label: "ورود اطلاعات", icon: "upload" as const, href: "/import", key: "import" },
   { label: "پیگیری‌ها", icon: "followup" as const, key: "followups" },
-  { label: "دستیار هوش مصنوعی", icon: "assistant" as const, key: "assistant" },
+  { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
   { label: "گزارش‌ها", icon: "report" as const, key: "reports" },
 ];
 
