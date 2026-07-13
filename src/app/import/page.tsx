@@ -10,24 +10,37 @@ export default function ImportPage() {
       title="ورود اطلاعات هلو"
       subtitle="بانک مشتریان، ریز فروش و جزئیات کامل فاکتورهای هلو را وارد کن."
     >
+      <section className={styles.primarySync}>
+        <div>
+          <span>روش پیشنهادی برای به‌روزرسانی‌های بعدی</span>
+          <h2>فایل‌های QRP هلو را مستقیم وارد کن</h2>
+          <p>
+            دیگر لازم نیست فایل‌ها را به CSV تبدیل کنی. برنامه گزارش «تیتر
+            فاکتور» و «فاکتور ستونی» را مستقیم می‌خواند، تغییرات را نشان می‌دهد
+            و فقط اطلاعات لازم را به‌روزرسانی می‌کند.
+          </p>
+        </div>
+        <Link href="/import/holo">به‌روزرسانی مستقیم از هلو ←</Link>
+      </section>
+
       <section className={styles.stepCards}>
         <article className={`${styles.stepCard} ${styles.doneCard}`}>
-          <span>مرحله ۱</span>
+          <span>راه‌اندازی اولیه</span>
           <strong>بانک مشتریان</strong>
-          <p>نام، موبایل، آدرس و خلاصه خرید ۶۹۷ مشتری</p>
+          <p>نام، موبایل، آدرس و خلاصه خرید مشتریان</p>
           <em>قبلاً انجام شده</em>
         </article>
         <Link className={`${styles.stepCard} ${styles.doneCard}`} href="/import/sales">
-          <span>مرحله ۲</span>
+          <span>روش قدیمی CSV</span>
           <strong>ریز فروش و شماره اسناد</strong>
-          <p>ورود ۲٬۱۰۴ فروش و اتصال آن‌ها به پرونده مشتریان</p>
-          <em>انجام و بررسی مرحله ←</em>
+          <p>ورود فایل تبدیل‌شده فروش برای بررسی یا بازیابی اطلاعات</p>
+          <em>مشاهده ابزار قدیمی ←</em>
         </Link>
-        <Link className={`${styles.stepCard} ${styles.nextCard}`} href="/import/invoices">
-          <span>مرحله ۳</span>
+        <Link className={`${styles.stepCard} ${styles.doneCard}`} href="/import/invoices">
+          <span>روش قدیمی CSV</span>
           <strong>فاکتورها و محصولات</strong>
-          <p>ورود ۲٬۱۰۵ فاکتور و ۹٬۲۸۱ ردیف کالای خریداری‌شده</p>
-          <em>شروع ورود جزئیات فاکتورها ←</em>
+          <p>ورود فایل‌های تبدیل‌شده تیتر و اقلام فاکتورها</p>
+          <em>مشاهده ابزار قدیمی ←</em>
         </Link>
       </section>
 
