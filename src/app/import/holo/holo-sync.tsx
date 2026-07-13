@@ -157,7 +157,7 @@ async function readAllRows(table: string, select: string) {
       .select(select)
       .range(from, from + pageSize - 1);
     if (error) throw error;
-    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    rows.push(...((data ?? []) as unknown as Record<string, unknown>[]));
     if ((data?.length ?? 0) < pageSize) break;
     from += pageSize;
   }
@@ -337,7 +337,7 @@ export default function HoloSync() {
       const newCustomerNames: string[] = [];
       const ambiguousCustomerNames: string[] = [];
 
-      for (const [key, displayName] of uniqueNames) {
+      for (const [, displayName] of uniqueNames) {
         const matches = resolveCustomerMatches(
           displayName,
           customersByName,

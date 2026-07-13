@@ -127,15 +127,13 @@ async function saveFollowup(formData: FormData) {
     redirect(`/customers/${customerId}?error=save`);
   }
 
-  if (nextFollowupAt) {
-    const { error: updateError } = await supabase
-      .from("customers")
-      .update({ next_followup_at: nextFollowupAt })
-      .eq("id", customerId);
+  const { error: updateError } = await supabase
+    .from("customers")
+    .update({ next_followup_at: nextFollowupAt })
+    .eq("id", customerId);
 
-    if (updateError) {
-      redirect(`/customers/${customerId}?error=nextdate`);
-    }
+  if (updateError) {
+    redirect(`/customers/${customerId}?error=nextdate`);
   }
 
   revalidatePath(`/customers/${customerId}`);
