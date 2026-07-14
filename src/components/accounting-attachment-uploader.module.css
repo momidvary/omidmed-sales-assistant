@@ -1,0 +1,27 @@
+.wrapper { display: grid; gap: 7px; min-width: 240px; }
+.form { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.form input { max-width: 190px; font-size: 9px; }
+.form button {
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.form button:disabled { opacity: .6; cursor: wait; }
+.message { color: #55716d; font-size: 9px; }
+.files { display: flex; flex-wrap: wrap; gap: 6px; }
+.files span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: #f2f7f6;
+  font-size: 9px;
+}
+.files a { color: var(--primary-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files button { color: #a04444; background: transparent; cursor: pointer; font-size: 14px; }

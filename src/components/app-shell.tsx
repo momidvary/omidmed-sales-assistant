@@ -13,7 +13,8 @@ export type IconName =
   | "search"
   | "check"
   | "campaign"
-  | "quote";
+  | "quote"
+  | "accounting";
 
 export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -30,6 +31,7 @@ export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
     check: <><path d="m5 12 4 4L19 6"/></>,
     campaign: <><path d="M3 11h4l9-5v12l-9-5H3z"/><path d="M7 13v6h4v-4"/><path d="M19 9c1.3 1.2 1.3 4.8 0 6"/></>,
     quote: <><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></>,
+    accounting: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 11h2M12 11h2M17 11h.01M7 15h2M12 15h2M17 15h.01"/></>,
   };
 
   return (
@@ -45,6 +47,7 @@ const menu = [
   { label: "ورود اطلاعات", icon: "upload" as const, href: "/import", key: "import" },
   { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },
   { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
+  { label: "حسابداری مدیریتی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
   { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
   { label: "گزارش‌ها", icon: "report" as const, href: "/reports", key: "reports" },
 ];
