@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import AppShell from "@/components/app-shell";
@@ -61,7 +62,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
       <AccountingNav active="purchases" />
       {databaseError ? <div className={styles.alert}>ابتدا SQL مرحله ۱۴ را اجرا کن. جزئیات: {databaseError.message}</div> : null}
       {errorMessage ? <div className={styles.alert}>{errorMessage}</div> : null}
-      {params.saved ? <div className={styles.success}>تأمین‌کننده با موفقیت ثبت شد.</div> : null}
+      {params.saved === "invoice-ai" ? <div className={styles.success}>فاکتور هوشمند با موفقیت ثبت و فایل آن آرشیو شد.</div> : params.saved ? <div className={styles.success}>تأمین‌کننده با موفقیت ثبت شد.</div> : null}
 
       <section className={styles.grid}>
         <article className={styles.panel}>
@@ -81,6 +82,9 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
 
       <article className={`${styles.panel} ${styles.panelWide}`} style={{ marginTop: 16 }}>
         <header className={styles.panelHeader}><div><h2>ثبت فاکتور خرید جدید</h2><p>هزینه حمل و سایر هزینه‌ها به نسبت مبلغ اقلام روی بهای هر ماده سرشکن می‌شود.</p></div></header>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+          <Link href="/accounting/purchases/scan" className={styles.submitButton} style={{ textDecoration: "none", display: "inline-flex", width: "auto" }}>✦ ثبت با عکس یا PDF و هوش مصنوعی</Link>
+        </div>
         <PurchaseInvoiceForm suppliers={suppliers} materials={materials} />
       </article>
 
