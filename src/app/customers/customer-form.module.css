@@ -1,0 +1,307 @@
+.topActions {
+  margin-bottom: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topActions a {
+  color: var(--primary);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.success,
+.error {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.85;
+}
+
+.success {
+  color: #176c59;
+  border: 1px solid #cce9df;
+  background: #edf9f5;
+}
+
+.error {
+  color: #973d32;
+  border: 1px solid #efcfca;
+  background: #fff1ef;
+}
+
+.error a {
+  color: inherit;
+  font-weight: 900;
+}
+
+.formCard,
+.managementCard,
+.dangerZone {
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.formCard {
+  padding: 24px;
+}
+
+.formHeader {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  border-bottom: 1px solid #eaf0ef;
+}
+
+.formHeader span:first-child {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.formHeader h2 {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.customerBadge,
+.prospectBadge,
+.archivedBadge {
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.customerBadge {
+  color: #176c59;
+  background: #e2f5ef;
+}
+
+.prospectBadge {
+  color: #8a641c;
+  background: #fff2d5;
+}
+
+.archivedBadge {
+  color: #5f6f6c;
+  background: #e9efee;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.grid label,
+.dangerZone label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  color: #3e5753;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.grid input,
+.grid select,
+.grid textarea,
+.dangerZone input {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid #d6e4e1;
+  border-radius: 10px;
+  color: var(--text);
+  background: #fff;
+  outline: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.grid textarea {
+  resize: vertical;
+  line-height: 1.85;
+}
+
+.grid input:focus,
+.grid select:focus,
+.grid textarea:focus,
+.dangerZone input:focus {
+  border-color: #77aea7;
+  box-shadow: 0 0 0 3px rgba(8, 127, 115, 0.09);
+}
+
+.grid small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.formActions {
+  margin-top: 23px;
+  padding-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #eaf0ef;
+}
+
+.formActions a,
+.formActions button,
+.archiveButton {
+  min-height: 43px;
+  padding: 0 17px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.formActions a {
+  color: #536a66;
+  background: #eef4f3;
+}
+
+.formActions button {
+  color: #fff;
+  background: var(--primary);
+}
+
+.formActions button:hover,
+.archiveButton:hover {
+  transform: translateY(-1px);
+}
+
+.managementCard,
+.dangerZone {
+  margin-top: 18px;
+  padding: 21px 23px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+}
+
+.managementCard span,
+.dangerZone span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.managementCard h3,
+.dangerZone h3 {
+  margin: 5px 0 7px;
+  font-size: 17px;
+}
+
+.managementCard p,
+.dangerZone p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.85;
+}
+
+.archiveButton {
+  border: 1px solid #bedbd6;
+  color: #17675f;
+  background: #edf7f5;
+  white-space: nowrap;
+}
+
+.dangerZone {
+  border-color: #ebcbc6;
+  background: #fffafa;
+  align-items: flex-start;
+}
+
+.dangerZone form {
+  min-width: 310px;
+  display: grid;
+  gap: 11px;
+}
+
+.dangerZone label strong {
+  color: #8e382e;
+  overflow-wrap: anywhere;
+}
+
+.dangerZone button {
+  min-height: 43px;
+  padding: 0 14px;
+  border-radius: 10px;
+  color: #fff;
+  background: #a64235;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+@media (max-width: 800px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .wide {
+    grid-column: auto;
+  }
+
+  .managementCard,
+  .dangerZone {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dangerZone form {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .archiveButton {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .formCard {
+    padding: 18px 15px;
+  }
+
+  .formHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .formActions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .formActions a,
+  .formActions button {
+    width: 100%;
+  }
+}

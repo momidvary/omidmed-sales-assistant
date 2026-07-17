@@ -339,3 +339,184 @@
     justify-content: flex-start;
   }
 }
+
+
+
+/* Step 22B: Customer CRM actions and status filters */
+.success {
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border: 1px solid #cce9df;
+  border-radius: 11px;
+  color: #176c59;
+  background: #edf9f5;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.addCustomer,
+.addProspect {
+  min-height: 54px;
+  padding: 0 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.addCustomer {
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 8px 20px rgba(8, 127, 115, 0.14);
+}
+
+.addProspect {
+  color: #78591d;
+  border: 1px solid #ecd9ae;
+  background: #fff6df;
+}
+
+.addCustomer:hover,
+.addProspect:hover {
+  transform: translateY(-1px);
+}
+
+.statusTabs {
+  margin-bottom: 14px;
+  padding: 8px;
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.statusTab {
+  min-height: 37px;
+  padding: 7px 13px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: #526b67;
+  background: #f0f5f4;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.statusTab:hover {
+  color: var(--primary-dark);
+  background: #e4f1ef;
+}
+
+.activeTab {
+  color: #fff;
+  background: var(--primary);
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.active {
+  color: #176c59;
+  background: #e2f5ef;
+}
+
+.prospect {
+  color: #8a641c;
+  background: #fff2d5;
+}
+
+.inactive {
+  color: #5f716d;
+  background: #eaf0ef;
+}
+
+.lost {
+  color: #9c4034;
+  background: #fde8e4;
+}
+
+.archived {
+  color: #596b67;
+  background: #e4eae9;
+}
+
+.stage {
+  margin-top: 5px !important;
+  color: #7a6a43 !important;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.manageButton {
+  min-height: 35px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d5e3e0;
+  border-radius: 9px;
+  color: #4d6661;
+  background: #fff;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.manageButton:hover {
+  color: var(--primary-dark);
+  border-color: #9dc2bc;
+}
+
+@media (max-width: 1050px) {
+  .toolbarActions {
+    width: 100%;
+  }
+
+  .addCustomer,
+  .addProspect,
+  .importButton {
+    flex: 1;
+  }
+}
+
+@media (max-width: 650px) {
+  .toolbarActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .addCustomer,
+  .addProspect,
+  .importButton {
+    width: 100%;
+  }
+}
+
