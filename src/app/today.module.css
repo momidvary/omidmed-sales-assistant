@@ -37,7 +37,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 850;
 }
 
 .hero h2 {
@@ -47,7 +47,7 @@
 }
 
 .hero p {
-  max-width: 760px;
+  max-width: 780px;
   margin: 0;
   color: #d7efec;
   font-size: 14px;
@@ -112,15 +112,102 @@
   background: #fff2f0;
 }
 
-.scoreCard strong {
-  font-size: 24px !important;
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.statsGrid article {
+  min-height: 123px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.statsGrid span,
+.statsGrid strong,
+.statsGrid small {
+  display: block;
+}
+
+.statsGrid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.statsGrid strong {
+  margin: 8px 0 5px;
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.statsGrid small {
+  color: #879692;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.compactValue {
+  font-size: 17px !important;
+  overflow-wrap: anywhere;
+}
+
+.progressCard {
+  margin-top: 12px;
+  padding: 14px 17px;
+  display: grid;
+  grid-template-columns: minmax(210px, auto) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.progressCard span,
+.progressCard strong {
+  display: block;
+}
+
+.progressCard > div:first-child span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.progressCard > div:first-child strong {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.progressTrack {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8efed;
+}
+
+.progressTrack span {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0b7b70, #37b39f);
+}
+
+.progressCard > b {
+  color: var(--primary);
+  font-size: 13px;
 }
 
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 315px;
   gap: 18px;
-  margin-top: 20px;
+  margin-top: 18px;
+  scroll-margin-top: 15px;
 }
 
 .mainPanel,
@@ -160,7 +247,6 @@
   border-radius: 999px;
   color: #17675f !important;
   background: #edf7f5;
-  font-size: 12px !important;
 }
 
 .tabs {
@@ -294,10 +380,20 @@
   background: #e0f4ee;
 }
 
+.badgeProspect {
+  color: #2f6591;
+  background: #e6f1fb;
+}
+
+.badgeDebt {
+  color: #984034;
+  background: #ffe5e0;
+}
+
 .meta {
   margin: 15px 66px 0 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 9px;
 }
 
@@ -490,30 +586,37 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  counter-reset: sales-step;
 }
 
 .tipList li {
   position: relative;
-  padding-right: 14px;
+  padding-right: 20px;
   color: #5e7470;
   font-size: 12px;
   line-height: 1.9;
+  counter-increment: sales-step;
 }
 
 .tipList li::before {
-  content: "";
+  content: counter(sales-step);
   position: absolute;
   right: 0;
-  top: 9px;
-  width: 6px;
-  height: 6px;
+  top: 3px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
+  color: #fff;
   background: var(--primary);
+  font-size: 9px;
+  font-weight: 900;
 }
 
 .syncLink {
   min-height: 41px;
-  margin-top: 13px;
+  margin-top: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -530,18 +633,16 @@
 }
 
 .muted {
+  margin: 0;
   color: #7c8f8b;
   font-size: 11px;
-  line-height: 1.85;
+  line-height: 1.9;
 }
 
-.statLink {
-  color: inherit;
-  text-decoration: none;
-}
-
-.statLink:hover .scoreCard {
-  border-color: #bcd8d3;
+@media (max-width: 1300px) {
+  .statsGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1180px) {
@@ -551,7 +652,7 @@
 
   .sidePanel {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 19px;
   }
 
@@ -559,6 +660,10 @@
     margin: 0;
     padding: 0;
     border: 0;
+  }
+
+  .meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -586,22 +691,20 @@
   .actions {
     margin-right: 0;
   }
+
+  .progressCard {
+    grid-template-columns: 1fr auto;
+  }
+
+  .progressTrack {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
-@media (max-width: 650px) {
-  .hero {
-    padding: 24px 20px;
-  }
-
-  .heroActions,
-  .heroPrimary,
-  .heroSecondary {
-    width: 100%;
-  }
-
-  .heroPrimary,
-  .heroSecondary {
-    justify-content: center;
+@media (max-width: 720px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sidePanel {
@@ -614,8 +717,15 @@
     border-top: 1px solid #edf2f1;
   }
 
-  .meta {
-    grid-template-columns: 1fr 1fr;
+  .heroActions,
+  .heroPrimary,
+  .heroSecondary {
+    width: 100%;
+  }
+
+  .heroPrimary,
+  .heroSecondary {
+    justify-content: center;
   }
 
   .actions {
@@ -637,24 +747,20 @@
   .item {
     padding: 17px 15px;
   }
-
-  .panelHeader {
-    align-items: flex-start;
-    flex-direction: column;
-  }
 }
 
-@media (max-width: 460px) {
+@media (max-width: 500px) {
+  .statsGrid,
   .meta {
     grid-template-columns: 1fr;
   }
 
-  .itemTop {
-    grid-template-columns: 46px minmax(0, 1fr);
+  .hero {
+    padding: 24px 20px;
   }
 
-  .score {
-    width: 46px;
-    height: 46px;
+  .panelHeader {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

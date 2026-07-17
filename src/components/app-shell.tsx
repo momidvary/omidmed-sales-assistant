@@ -46,7 +46,9 @@ export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
 const menu = [
   { label: "امروز", icon: "home" as const, href: "/", key: "home" },
   { label: "مشتریان", icon: "users" as const, href: "/customers", key: "customers" },
+  { label: "قیف فروش", icon: "followup" as const, href: "/sales", key: "sales" },
   { label: "ورود اطلاعات", icon: "upload" as const, href: "/import", key: "import" },
+  { label: "اتصال هلو", icon: "upload" as const, href: "/settings/holo-sync", key: "holo-sync" },
   { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },
   { label: "پیامک", icon: "sms" as const, href: "/sms", key: "sms" },
   { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
