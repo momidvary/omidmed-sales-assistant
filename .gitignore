@@ -42,3 +42,10 @@ next-env.d.ts
 
 .step*-backup/
 .vercel
+
+# Holoo Windows sync agent local/runtime data
+/tools/holoo-sync-agent/config.json
+/tools/holoo-sync-agent/.holoo-sync-agent/
+/tools/holoo-sync-agent/*.dpapi
+/tools/holoo-sync-agent/*.state.json
+/tools/holoo-sync-agent/logs/
