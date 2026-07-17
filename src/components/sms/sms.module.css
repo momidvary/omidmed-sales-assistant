@@ -1,0 +1,373 @@
+.singleWrap {
+  position: relative;
+}
+
+.openButton,
+.sendButton,
+.aiToggle,
+.aiGenerate,
+.aiSuggestion button {
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.openButton {
+  min-height: 36px;
+  padding: 0 13px;
+  color: #fff;
+  background: #145d89;
+}
+
+.composer {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  gap: 10px;
+  width: min(560px, 90vw);
+  margin-top: 9px;
+  padding: 14px;
+  border: 1px solid #cfe0ea;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(24, 55, 74, 0.15);
+}
+
+.compact .composer {
+  width: min(470px, 90vw);
+}
+
+.composer label,
+.aiControls label {
+  display: grid;
+  gap: 6px;
+  color: #4a686f;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.composer input,
+.composer textarea,
+.campaignBox textarea,
+.aiControls textarea,
+.aiControls select {
+  width: 100%;
+  border: 1px solid #d7e4e9;
+  border-radius: 9px;
+  padding: 9px 10px;
+  outline: none;
+  color: #243f46;
+  background: #fbfdfd;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.9;
+}
+
+.composer textarea,
+.campaignBox textarea,
+.aiControls textarea {
+  resize: vertical;
+}
+
+.composer input:focus,
+.composer textarea:focus,
+.campaignBox textarea:focus,
+.aiControls textarea:focus,
+.aiControls select:focus {
+  border-color: #77aebf;
+  box-shadow: 0 0 0 3px rgba(65, 143, 169, 0.1);
+}
+
+.recipient {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #52717a;
+  background: #f0f7fa;
+  font-size: 9px;
+}
+
+.recipient b {
+  color: #244f5e;
+}
+
+.counter {
+  color: #829397;
+  font-size: 9px;
+  text-align: left;
+}
+
+.checkbox,
+.confirm {
+  display: flex !important;
+  align-items: center;
+  gap: 7px !important;
+  font-size: 9px !important;
+  line-height: 1.8;
+}
+
+.checkbox input,
+.confirm input {
+  width: 16px !important;
+  height: 16px;
+}
+
+.sendButton {
+  min-height: 40px;
+  padding: 0 16px;
+  color: #fff;
+  background: #0d746b;
+}
+
+.sendButton:disabled,
+.aiGenerate:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.success,
+.error {
+  padding: 9px 11px;
+  border-radius: 9px;
+  font-size: 9px;
+  line-height: 1.8;
+}
+
+.success {
+  border: 1px solid #bfe5d9;
+  color: #18715f;
+  background: #effaf6;
+}
+
+.error {
+  border: 1px solid #efc3bd;
+  color: #963a31;
+  background: #fff3f1;
+}
+
+.campaignBox {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+  padding: 15px;
+  border: 1px solid #cfe5df;
+  border-radius: 13px;
+  background: #f8fcfb;
+}
+
+.campaignHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.campaignHeader strong {
+  display: block;
+  font-size: 11px;
+}
+
+.campaignHeader p {
+  margin: 4px 0 0 !important;
+  color: #617973 !important;
+  font-size: 9px !important;
+  line-height: 1.8 !important;
+}
+
+.campaignHeader span {
+  padding: 5px 8px;
+  border-radius: 20px;
+  color: #2f665d;
+  background: #e6f3ef;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.placeholders {
+  color: #6a7c78;
+  font-size: 9px;
+}
+
+.placeholders code {
+  display: inline-block;
+  margin: 2px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: #27635a;
+  background: #e9f2f0;
+}
+
+.confirm {
+  padding: 9px 10px;
+  border: 1px solid #ead9aa;
+  border-radius: 9px;
+  color: #765b17;
+  background: #fff9e9;
+  font-weight: 800;
+}
+
+.aiBox {
+  display: grid;
+  gap: 9px;
+}
+
+.aiToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid #b9d6df;
+  color: #175c72;
+  background: linear-gradient(135deg, #f2fbfd, #eaf6fa);
+}
+
+.aiBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 7px;
+  color: #fff;
+  background: linear-gradient(135deg, #155d89, #16817a);
+  font-size: 8px;
+  letter-spacing: 0.4px;
+}
+
+.aiPanel {
+  display: grid;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid #c9dfe6;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfeff, #f4fafb);
+}
+
+.aiIntro {
+  display: grid;
+  gap: 4px;
+}
+
+.aiIntro strong {
+  color: #234f5c;
+  font-size: 10px;
+}
+
+.aiIntro span {
+  color: #6b7f84;
+  font-size: 9px;
+  line-height: 1.8;
+}
+
+.aiControls {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.42fr) minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.aiGenerate {
+  min-height: 39px;
+  padding: 0 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #175f86, #11766e);
+}
+
+.aiStrategy {
+  padding: 10px 11px;
+  border-right: 3px solid #31869a;
+  border-radius: 8px;
+  color: #496b73;
+  background: #edf7f9;
+  font-size: 9px;
+  line-height: 1.9;
+}
+
+.aiStrategy b {
+  color: #234f5c;
+}
+
+.aiSuggestions {
+  display: grid;
+  gap: 9px;
+}
+
+.aiSuggestion {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #d9e7e9;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.aiSuggestion header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.aiSuggestion header div {
+  display: grid;
+  gap: 2px;
+}
+
+.aiSuggestion header span,
+.aiSuggestion header small {
+  color: #799095;
+  font-size: 8px;
+}
+
+.aiSuggestion header strong {
+  color: #294f59;
+  font-size: 10px;
+}
+
+.aiMessage {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: #263f45;
+  background: #f6faf9;
+  font-size: 10px;
+  line-height: 2;
+  white-space: pre-wrap;
+}
+
+.aiReason {
+  margin: 0;
+  color: #718287;
+  font-size: 9px;
+  line-height: 1.8;
+}
+
+.aiSuggestion button {
+  min-height: 34px;
+  padding: 0 11px;
+  color: #155d55;
+  background: #e6f5f0;
+}
+
+@media (max-width: 700px) {
+  .campaignHeader {
+    flex-direction: column;
+  }
+
+  .composer {
+    position: static;
+    width: 100%;
+  }
+
+  .aiControls {
+    grid-template-columns: 1fr;
+  }
+}

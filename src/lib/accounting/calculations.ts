@@ -1,5 +1,6 @@
 export type CostingSettings = {
   monthly_fixed_overhead: number | string;
+  monthly_selling_overhead?: number | string;
   overhead_mode?: string;
   include_payroll_in_overhead?: boolean;
   planned_monthly_output: number | string;
@@ -23,6 +24,7 @@ export type CostingProduct = {
   packaging_per_unit: number | string;
   other_variable_per_unit: number | string;
   overhead_per_unit_override: number | string | null;
+  selling_cost_per_unit_override?: number | string | null;
   min_margin: number | string | null;
   cash_margin: number | string | null;
   wholesale_margin: number | string | null;
@@ -123,7 +125,14 @@ export function calculateProductPricing({
     product.overhead_per_unit_override == null
       ? defaultOverhead
       : numeric(product.overhead_per_unit_override);
-  const nonMaterialCost = directLabor + packaging + otherVariable + overhead;
+  const defaultSellingCost =
+    numeric(settings.monthly_selling_overhead) /
+    Math.max(1, numeric(settings.planned_monthly_output));
+  const sellingCost =
+    product.selling_cost_per_unit_override == null
+      ? defaultSellingCost
+      : numeric(product.selling_cost_per_unit_override);
+  const nonMaterialCost = directLabor + packaging + otherVariable + overhead + sellingCost;
 
   const historicalCost = historicalMaterialCost + nonMaterialCost;
   const weightedAverageCost = averageMaterialCost + nonMaterialCost;
@@ -176,6 +185,7 @@ export function calculateProductPricing({
     packaging,
     otherVariable,
     overhead,
+    sellingCost,
     historicalCost,
     weightedAverageCost,
     replacementCost,

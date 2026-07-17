@@ -14,6 +14,7 @@ import {
 } from "@/lib/campaigns/constants";
 import CopyMessageButton from "./copy-message-button";
 import styles from "./campaign.module.css";
+import CampaignSmsSender from "@/components/sms/campaign-sms-sender";
 
 const number = new Intl.NumberFormat("fa-IR");
 
@@ -427,6 +428,14 @@ export default async function CampaignDetailPage({
               </div>
               <p>{typedCampaign.message_template}</p>
             </div>
+          ) : null}
+          {typedCampaign.status === "active" ? (
+            <CampaignSmsSender
+              campaignId={typedCampaign.id}
+              campaignName={typedCampaign.name}
+              defaultTemplate={typedCampaign.message_template}
+              targetCount={numeric(typedCampaign.target_count)}
+            />
           ) : null}
         </div>
 

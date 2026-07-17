@@ -12,6 +12,7 @@ import {
   opportunityStatusLabels,
 } from "@/lib/campaigns/constants";
 import styles from "./quotes.module.css";
+import SingleSmsComposer from "@/components/sms/single-sms-composer";
 
 const number = new Intl.NumberFormat("fa-IR");
 
@@ -396,6 +397,17 @@ export default async function QuotesPage({
                 {phoneLink ? <a href={`tel:${phoneLink}`}>تماس</a> : null}
                 <Link href={`/customers/${customer.id}`}>مشاهده پرونده</Link>
               </div>
+              <SingleSmsComposer
+                compact
+                customerId={customer.id}
+                customerName={customer.name}
+                phone={customer.phone}
+                source="quote"
+                campaignId={row.campaign_id}
+                campaignMemberId={row.campaign_member_id}
+                opportunityId={row.id}
+                defaultText={`${customer.name} گرامی، وقت بخیر. برای پیگیری قیمت ${row.product_interest || "محصولات امیدمِد"} که خدمتتان اعلام شد، در خدمت شما هستیم. امیدمِد`}
+              />
             </article>
           );
         }) : (

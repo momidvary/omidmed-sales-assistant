@@ -25,6 +25,7 @@ import styles from "../accounting.module.css";
 
 const defaultSettings: CostingSettings = {
   monthly_fixed_overhead: 0,
+  monthly_selling_overhead: 0,
   overhead_mode: "actual_current_month",
   include_payroll_in_overhead: true,
   planned_monthly_output: 1,
@@ -141,22 +142,41 @@ export default async function PricingPage({ searchParams }: { searchParams: Prom
   const supabase = await createClient();
   const currentRange = currentJalaliMonthRange();
   const [settingsResult, productsResult, componentsResult, materialsResult, snapshotsResult, expenseResult, payrollResult] = await Promise.all([
-    supabase.from("costing_settings").select("monthly_fixed_overhead,overhead_mode,include_payroll_in_overhead,planned_monthly_output,default_min_margin,default_cash_margin,default_wholesale_margin,default_festival_margin,default_credit_monthly_rate,inflation_buffer_percent,stale_price_days,rounding_step").maybeSingle(),
-    supabase.from("costing_products").select("id,name,sku,category,unit,direct_labor_per_unit,packaging_per_unit,other_variable_per_unit,overhead_per_unit_override,min_margin,cash_margin,wholesale_margin,festival_margin,credit_days,credit_monthly_rate,current_cash_price").eq("is_active", true).order("name"),
+    supabase.from("costing_settings").select("monthly_fixed_overhead,monthly_selling_overhead,overhead_mode,include_payroll_in_overhead,planned_monthly_output,default_min_margin,default_cash_margin,default_wholesale_margin,default_festival_margin,default_credit_monthly_rate,inflation_buffer_percent,stale_price_days,rounding_step").maybeSingle(),
+    supabase.from("costing_products").select("id,name,sku,category,unit,direct_labor_per_unit,packaging_per_unit,other_variable_per_unit,overhead_per_unit_override,selling_cost_per_unit_override,min_margin,cash_margin,wholesale_margin,festival_margin,credit_days,credit_monthly_rate,current_cash_price").eq("is_active", true).order("name"),
     supabase.from("product_materials").select("product_id,material_id,quantity_per_unit,waste_percent").limit(5000),
     supabase.from("material_cost_summary").select("id,name,unit,latest_unit_cost,weighted_avg_unit_cost,replacement_unit_cost,latest_purchase_date,replacement_price_at").eq("is_active", true).limit(5000),
     supabase.from("price_snapshots").select("product_id,snapshot_date,cash_price,created_at").order("created_at", { ascending: false }).limit(1000),
-    supabase.from("workshop_expenses").select("amount,cost_behavior").gte("expense_date", currentRange.from).lt("expense_date", currentRange.toExclusive),
+    supabase.from("workshop_expenses").select("amount,cost_behavior,cost_scope,manufacturing_share_percent,classification_status").gte("expense_date", currentRange.from).lt("expense_date", currentRange.toExclusive),
     supabase.from("payroll_entries").select("net_pay,employer_costs").eq("jalali_year", currentRange.year).eq("jalali_month", currentRange.month),
   ]);
 
   const rawSettings = (settingsResult.data ?? defaultSettings) as CostingSettings;
-  const currentFixedExpenses = (expenseResult.data ?? []).filter((item) => item.cost_behavior !== "variable").reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+  const currentManufacturingExpenses = (expenseResult.data ?? []).reduce((sum, item) => {
+    const amount = Number(item.amount ?? 0);
+    if (["confirmed", "auto"].includes(item.classification_status ?? "")) {
+      return item.cost_scope === "manufacturing"
+        ? sum + amount * (Number(item.manufacturing_share_percent ?? 0) / 100)
+        : sum;
+    }
+    return item.cost_behavior !== "variable" ? sum + amount : sum;
+  }, 0);
+  const currentSellingExpenses = (expenseResult.data ?? []).reduce(
+    (sum, item) =>
+      ["confirmed", "auto"].includes(item.classification_status ?? "") && item.cost_scope === "selling"
+        ? sum + Number(item.amount ?? 0)
+        : sum,
+    0,
+  );
   const currentPayrollCost = (payrollResult.data ?? []).reduce((sum, item) => sum + Number(item.net_pay ?? 0) + Number(item.employer_costs ?? 0), 0);
-  const actualMonthlyOverhead = currentFixedExpenses + (rawSettings.include_payroll_in_overhead === false ? 0 : currentPayrollCost);
+  const actualMonthlyOverhead = currentManufacturingExpenses + (rawSettings.include_payroll_in_overhead === false ? 0 : currentPayrollCost);
   const settings: CostingSettings = {
     ...rawSettings,
     monthly_fixed_overhead: rawSettings.overhead_mode === "manual" ? rawSettings.monthly_fixed_overhead : actualMonthlyOverhead,
+    monthly_selling_overhead:
+      rawSettings.overhead_mode === "manual"
+        ? Number(rawSettings.monthly_selling_overhead ?? 0)
+        : currentSellingExpenses,
   };
   const products = (productsResult.data ?? []) as CostingProduct[];
   const components = (componentsResult.data ?? []) as ProductMaterial[];
@@ -199,7 +219,7 @@ export default async function PricingPage({ searchParams }: { searchParams: Prom
       </section>
 
       <article className={`${styles.panel} ${styles.panelWide}`}>
-        <header className={styles.panelHeader}><div><h2>تنظیمات عمومی بهای تمام‌شده</h2><p>هزینه ثابت ماهانه روی تعداد واحد تولید برنامه‌ریزی‌شده سرشکن می‌شود. هزینه ثبت‌شده ماه جاری: {formatMoney(actualMonthlyOverhead)}</p></div></header>
+        <header className={styles.panelHeader}><div><h2>تنظیمات عمومی بهای تمام‌شده</h2><p>هزینه تولید و هزینه فروش/ارسال جدا محاسبه می‌شوند. سربار تولید فعلی: {formatMoney(actualMonthlyOverhead)} · فروش و توزیع: {formatMoney(Number(settings.monthly_selling_overhead ?? 0))}</p></div></header>
         <form action={saveSettings} className={styles.form}>
           <div className={styles.formGrid}>
             <label>منبع سربار<select name="overhead_mode" defaultValue={String(rawSettings.overhead_mode ?? "actual_current_month")}><option value="actual_current_month">خودکار از هزینه‌ها و حقوق ماه جاری</option><option value="manual">عدد دستی</option></select></label>
@@ -253,7 +273,8 @@ export default async function PricingPage({ searchParams }: { searchParams: Prom
                 <div><span>مواد جایگزینی</span><strong>{formatMoney(result.replacementMaterialCost)}</strong></div>
                 <div><span>دستمزد مستقیم</span><strong>{formatMoney(result.directLabor)}</strong></div>
                 <div><span>بسته‌بندی و متغیر</span><strong>{formatMoney(result.packaging + result.otherVariable)}</strong></div>
-                <div><span>سهم سربار واحد</span><strong>{formatMoney(result.overhead)}</strong></div>
+                <div><span>سهم سربار تولید</span><strong>{formatMoney(result.overhead)}</strong></div>
+                <div><span>سهم فروش و ارسال</span><strong>{formatMoney(result.sellingCost)}</strong></div>
               </div>
 
               <form action={savePriceDecision} className={styles.actionRow}>

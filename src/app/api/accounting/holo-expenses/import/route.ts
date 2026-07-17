@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { allowedCostBehaviors, allowedExpenseCategories } from "@/lib/accounting/constants";
+import { classificationMatches } from "@/lib/accounting/expense-classification";
 
 export const runtime = "nodejs";
 
@@ -72,14 +73,39 @@ export async function POST(request: Request) {
     const ownerId = authData.user.id;
     const multiplier = unit === "rial" ? 0.1 : 1;
 
+    const { data: savedRules, error: rulesError } = await supabase
+      .from("expense_classification_rules")
+      .select("match_text,match_mode,category,cost_behavior,cost_scope,manufacturing_share_percent,reason")
+      .eq("is_active", true)
+      .limit(1000);
+    if (rulesError) {
+      return NextResponse.json({ error: `خواندن قواعد هزینه انجام نشد. SQL شماره ۰۰۹ را اجرا کن. ${rulesError.message}` }, { status: 500 });
+    }
+
     const sanitized = rows.map((row) => {
-      const kind = allowedKinds.has(clean(row.kind, 30)) ? clean(row.kind, 30) : "review";
+      const originalKind = allowedKinds.has(clean(row.kind, 30)) ? clean(row.kind, 30) : "review";
+      const matchingRule = (savedRules ?? []).find((rule) =>
+        classificationMatches(rule.match_text, row.normalizedDescription || row.description, rule.match_mode),
+      );
+      let kind = originalKind;
+      let reviewKind = clean(row.reviewKind, 30);
+      if (matchingRule) {
+        if (["manufacturing", "selling", "period"].includes(matchingRule.cost_scope)) kind = "expense";
+        else if (matchingRule.cost_scope === "partner") kind = "partner_withdrawal";
+        else if (matchingRule.cost_scope === "ignore") kind = "ignore";
+        else if (matchingRule.cost_scope === "asset") {
+          kind = "review";
+          reviewKind = "asset_purchase";
+        }
+      }
       const date = clean(row.gregorianDate, 20);
       const rawAmount = Math.max(Number(row.debit ?? 0), Number(row.credit ?? 0));
       const amount = Math.max(0, Math.round(rawAmount * multiplier));
       return {
         row,
         kind,
+        reviewKind,
+        rule: matchingRule ?? null,
         date,
         amount,
         key: externalKey(ownerId, row),
@@ -119,9 +145,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: batchError?.message || "ساخت سابقه ورود فایل انجام نشد." }, { status: 500 });
     }
 
-    const expenses = sanitized.filter((item) => item.kind === "expense").map(({ row, date, amount, key }) => {
-      const category = clean(row.category, 30);
-      const costBehavior = clean(row.costBehavior, 20);
+    const expenses = sanitized.filter((item) => item.kind === "expense").map(({ row, date, amount, key, rule }) => {
+      const category = clean(rule?.category ?? row.category, 30);
+      const costBehavior = clean(rule?.cost_behavior ?? row.costBehavior, 20);
+      const ruleScope = clean(rule?.cost_scope, 30);
       return {
         owner_id: ownerId,
         expense_date: date,
@@ -137,6 +164,11 @@ export async function POST(request: Request) {
         source_document_number: clean(row.documentNumber, 80) || null,
         raw_description: clean(row.description, 2000) || null,
         import_batch_id: batch.id,
+        cost_scope: ["manufacturing", "selling", "period"].includes(ruleScope) ? ruleScope : "unreviewed",
+        manufacturing_share_percent: ruleScope === "manufacturing" ? Number(rule?.manufacturing_share_percent ?? 100) : 0,
+        classification_status: rule ? "auto" : "pending",
+        classification_source: rule ? "saved_rule" : null,
+        classification_reason: clean(rule?.reason, 600) || null,
       };
     });
 
@@ -153,8 +185,7 @@ export async function POST(request: Request) {
       import_batch_id: batch.id,
     }));
 
-    const reviewItems = sanitized.filter((item) => item.kind === "review").map(({ row, date, amount, key }) => {
-      const reviewKind = clean(row.reviewKind, 30);
+    const reviewItems = sanitized.filter((item) => item.kind === "review").map(({ row, date, amount, key, reviewKind, rule }) => {
       return {
         owner_id: ownerId,
         entry_date: date,
@@ -163,7 +194,7 @@ export async function POST(request: Request) {
         document_number: clean(row.documentNumber, 80) || null,
         source_account: clean(row.sourceAccount, 120) || null,
         raw_description: clean(row.description, 2000),
-        suggested_category: allowedExpenseCategories.has(clean(row.category, 30)) ? clean(row.category, 30) : "other",
+        suggested_category: allowedExpenseCategories.has(clean(rule?.category ?? row.category, 30)) ? clean(rule?.category ?? row.category, 30) : "other",
         status: "pending",
         source: "holo_fp3",
         external_key: key,
@@ -220,7 +251,29 @@ export async function POST(request: Request) {
       duplicates,
     });
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "خطای ناشناخته در ورود فایل";
+    let message = "خطای ناشناخته در ورود فایل";
+
+    if (caught instanceof Error) {
+      message = caught.message;
+    } else if (caught && typeof caught === "object") {
+      const error = caught as {
+        message?: unknown;
+        details?: unknown;
+        hint?: unknown;
+        code?: unknown;
+      };
+
+      const parts = [
+        typeof error.message === "string" ? error.message : "",
+        typeof error.details === "string" ? error.details : "",
+        typeof error.hint === "string" ? error.hint : "",
+        typeof error.code === "string" ? `کد خطا: ${error.code}` : "",
+      ].filter(Boolean);
+
+      if (parts.length) message = parts.join(" | ");
+    }
+
+    console.error("Holo accounting import failed:", caught);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

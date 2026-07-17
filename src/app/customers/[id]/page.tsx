@@ -9,6 +9,7 @@ import CustomerFilesManager, {
   type CustomerFileRecord,
 } from "./customer-files-manager";
 import { getCurrentJalaliDate, parseJalaliTehranDateTime } from "@/lib/jalali";
+import SingleSmsComposer from "@/components/sms/single-sms-composer";
 
 const number = new Intl.NumberFormat("fa-IR");
 
@@ -320,6 +321,14 @@ export default async function CustomerPage({
               <span className={styles.disabledAction}>شماره تماس ندارد</span>
             )}
           </div>
+
+          <SingleSmsComposer
+            customerId={customer.id}
+            customerName={customer.name}
+            phone={customer.phone}
+            source="customer"
+            defaultText={`${customer.name} گرامی، وقت بخیر. برای پیگیری نیاز مجموعه شما به پد، ملحفه، کیف و سایر لوازم مصرفی فیزیوتراپی در خدمتتان هستیم. امیدمِد`}
+          />
         </article>
 
         <article className={styles.statsCard}>

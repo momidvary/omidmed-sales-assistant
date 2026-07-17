@@ -14,7 +14,8 @@ export type IconName =
   | "check"
   | "campaign"
   | "quote"
-  | "accounting";
+  | "accounting"
+  | "sms";
 
 export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -32,6 +33,7 @@ export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
     campaign: <><path d="M3 11h4l9-5v12l-9-5H3z"/><path d="M7 13v6h4v-4"/><path d="M19 9c1.3 1.2 1.3 4.8 0 6"/></>,
     quote: <><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></>,
     accounting: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 11h2M12 11h2M17 11h.01M7 15h2M12 15h2M17 15h.01"/></>,
+    sms: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></>,
   };
 
   return (
@@ -46,6 +48,7 @@ const menu = [
   { label: "مشتریان", icon: "users" as const, href: "/customers", key: "customers" },
   { label: "ورود اطلاعات", icon: "upload" as const, href: "/import", key: "import" },
   { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },
+  { label: "پیامک", icon: "sms" as const, href: "/sms", key: "sms" },
   { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
   { label: "حسابداری مدیریتی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
   { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
