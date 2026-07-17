@@ -161,7 +161,9 @@ Installer این کارها را انجام می‌دهد:
    - `OmidMed Holoo Incremental Sync`: هر دو ساعت
    - `OmidMed Holoo Weekly Full Sync`: یکشنبه ساعت ۰۳:۰۰ محلی
 
-Scheduled Taskها با `MultipleInstances=IgnoreNew` ساخته می‌شوند و mutex سراسری Agent نیز از اجرای هم‌زمان دستی/زمان‌بندی‌شده جلوگیری می‌کند.
+Scheduled Taskها با `LogonType=InteractiveToken` و `RunLevel=Highest` اجرا می‌شوند (نام همین حالت در پارامتر PowerShell برابر `Interactive` است). بنابراین Sync خودکار فقط زمانی اجرا می‌شود که همان کاربر ویندوزی که Agent را نصب کرده است وارد سیستم باشد. این حالت باعث می‌شود DPAPI در scope همان کاربر قابل خواندن باشد و نشست کاربر به اینترنت برای ارسال امن به API دسترسی داشته باشد.
+
+Taskها با `StartWhenAvailable` و `MultipleInstances=IgnoreNew` ساخته می‌شوند و mutex سراسری Agent نیز از اجرای هم‌زمان دستی/زمان‌بندی‌شده جلوگیری می‌کند.
 
 ## اولین Sync واقعی
 

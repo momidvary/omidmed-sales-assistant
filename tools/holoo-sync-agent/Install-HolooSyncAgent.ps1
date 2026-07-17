@@ -177,7 +177,8 @@ $weeklyAction = New-ScheduledTaskAction -Execute $powerShellPath -Argument $week
 $incrementalStart = (Get-Date).AddMinutes(5)
 $incrementalTrigger = New-ScheduledTaskTrigger -Once -At $incrementalStart -RepetitionInterval (New-TimeSpan -Hours 2)
 $weeklyTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Sunday -At "03:00"
-$principal = New-ScheduledTaskPrincipal -UserId $taskUser -LogonType S4U -RunLevel Highest
+# The ScheduledTasks cmdlet calls Task Scheduler's InteractiveToken logon type "Interactive".
+$principal = New-ScheduledTaskPrincipal -UserId $taskUser -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
 Register-ScheduledTask -TaskName $IncrementalTaskName -Action $incrementalAction -Trigger $incrementalTrigger -Principal $principal -Settings $settings -Description "OmidMed SELECT-only Holoo incremental sync every two hours" -Force | Out-Null
