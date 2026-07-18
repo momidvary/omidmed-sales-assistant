@@ -49,7 +49,7 @@ const menu = [
   { label: "قیف فروش", icon: "followup" as const, href: "/sales", key: "sales" },
   { label: "ورود اطلاعات", icon: "upload" as const, href: "/import", key: "import" },
   { label: "اتصال هلو", icon: "upload" as const, href: "/settings/holo-sync", key: "holo-sync" },
-  { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },
+  { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },\n  { label: "استودیو محتوا", icon: "calendar" as const, href: "/content-studio", key: "content-studio" },
   { label: "پیامک", icon: "sms" as const, href: "/sms", key: "sms" },
   { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
   { label: "حسابداری مدیریتی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
