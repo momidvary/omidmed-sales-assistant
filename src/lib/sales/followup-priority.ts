@@ -159,10 +159,10 @@ export function buildFollowupCandidates({
 
       if (customer.priority === "vip") {
         score += 24;
-        reasons.push("مشتری ویژه است");
+        reasons.push("ارزش تجاری مشتری ویژه است");
       } else if (customer.priority === "high") {
         score += 16;
-        reasons.push("اولویت پیگیری زیاد است");
+        reasons.push("ارزش تجاری مشتری کلیدی است");
       } else if (customer.priority === "normal") {
         score += 5;
       }
@@ -232,8 +232,8 @@ export function buildFollowupCandidates({
         return true;
       }
 
-      // A manual VIP/high label can strengthen a real purchase pattern, but it
-      // must not turn a one-off or annual customer into a recurring priority.
+      // A manual customer-value label can strengthen a real purchase pattern,
+      // but it must not turn a one-off or annual customer into a recurring priority.
       if (
         customer.isPriorityCustomer &&
         customer.hasReliablePurchaseCycle &&
