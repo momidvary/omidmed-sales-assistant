@@ -42,6 +42,23 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
+function smsStatus(row: SmsLogRow) {
+  if (row.delivery_status === "delivered") {
+    return { label: "تحویل شد", failed: false };
+  }
+
+  if (
+    row.delivery_status === "undelivered" ||
+    row.delivery_status === "failed" ||
+    row.delivery_status === "rejected" ||
+    !row.request_success
+  ) {
+    return { label: "نرسید", failed: true };
+  }
+
+  return { label: "پذیرفته شد؛ در انتظار تحویل", failed: false };
+}
+
 export default async function SmsPage() {
   const supabase = await createClient();
 
@@ -77,18 +94,18 @@ export default async function SmsPage() {
     process.env.MELIPAYAMAK_SENDER?.trim(),
   );
 
-  const successCount = rows.filter(
-    (row) => row.request_success === true,
+  const deliveredCount = rows.filter(
+    (row) => row.delivery_status === "delivered",
   ).length;
   const failedCount = rows.filter(
-    (row) => row.request_success === false,
+    (row) => smsStatus(row).failed,
   ).length;
 
   return (
     <AppShell
       active="sms"
       title="مرکز پیامک"
-      subtitle="ارسال تکی، کمپین شخصی‌سازی‌شده و سابقه پیامک‌های ملی پیامک"
+      subtitle="ارسال تکی، کمپین شخصی‌سازی‌شده و بررسی تحویل واقعی پیامک‌های ملی پیامک"
     >
       <section className={styles.hero}>
         <div>
@@ -113,11 +130,11 @@ export default async function SmsPage() {
           <strong>{numberFormatter.format(rows.length)}</strong>
         </article>
         <article>
-          <span>پذیرفته‌شده</span>
-          <strong>{numberFormatter.format(successCount)}</strong>
+          <span>تحویل‌شده به گوشی</span>
+          <strong>{numberFormatter.format(deliveredCount)}</strong>
         </article>
         <article>
-          <span>ناموفق</span>
+          <span>نرسیده یا ردشده</span>
           <strong>{numberFormatter.format(failedCount)}</strong>
         </article>
       </section>
@@ -168,7 +185,7 @@ export default async function SmsPage() {
                   <th>مشتری/شماره</th>
                   <th>متن</th>
                   <th>منبع</th>
-                  <th>وضعیت</th>
+                  <th>وضعیت واقعی</th>
                   <th>شناسه</th>
                 </tr>
               </thead>
@@ -178,6 +195,7 @@ export default async function SmsPage() {
                   const customerName = row.customer_id
                     ? customerMap.get(row.customer_id)
                     : null;
+                  const status = smsStatus(row);
 
                   return (
                     <tr key={row.id}>
@@ -191,13 +209,16 @@ export default async function SmsPage() {
                       <td>
                         <span
                           className={
-                            row.request_success
-                              ? styles.accepted
-                              : styles.failed
+                            status.failed ? styles.failed : styles.accepted
                           }
                         >
-                          {row.request_success ? "پذیرفته شد" : "ناموفق"}
+                          {status.label}
                         </span>
+                        {row.provider_status ? (
+                          <small title={row.provider_status}>
+                            {row.provider_status}
+                          </small>
+                        ) : null}
                       </td>
                       <td dir="ltr">{row.provider_rec_id || "—"}</td>
                     </tr>
