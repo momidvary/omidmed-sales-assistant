@@ -55,14 +55,16 @@ begin
 end
 $$;
 
--- Repair existing Holoo invoice items exactly once.
+-- Repair existing Holoo invoice items exactly once. The source alias is used on
+-- the right-hand side because invoice_items and invoices share column names
+-- such as discount_amount in the UPDATE ... FROM statement.
 do $$
 declare
   v_set_clause text;
 begin
   select string_agg(
     format(
-      '%1$I = case when %1$I is null then null else round(%1$I / 10) end',
+      '%1$I = case when ii.%1$I is null then null else round(ii.%1$I / 10) end',
       c.column_name
     ),
     ', '
