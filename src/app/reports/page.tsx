@@ -5,7 +5,6 @@ import {
   fetchAllCustomers,
   fetchAllFollowups,
   fetchAllInvoices,
-  fetchAllSales,
   fetchInvoiceItems,
 } from "@/lib/reports/data";
 import {
@@ -81,22 +80,20 @@ export default async function ReportsPage({
   const supabase = await createClient();
 
   let errorMessage: string | null = null;
-  let sales = [] as Awaited<ReturnType<typeof fetchAllSales>>;
-  let previousSales = [] as Awaited<ReturnType<typeof fetchAllSales>>;
+  let invoices = [] as Awaited<ReturnType<typeof fetchAllInvoices>>;
+  let previousInvoices = [] as Awaited<ReturnType<typeof fetchAllInvoices>>;
   let customers = [] as Awaited<ReturnType<typeof fetchAllCustomers>>;
   let followups = [] as Awaited<ReturnType<typeof fetchAllFollowups>>;
-  let invoices = [] as Awaited<ReturnType<typeof fetchAllInvoices>>;
   let items = [] as Awaited<ReturnType<typeof fetchInvoiceItems>>;
 
   try {
-    [sales, previousSales, customers, followups, invoices] = await Promise.all([
-      fetchAllSales(supabase, range),
+    [invoices, previousInvoices, customers, followups] = await Promise.all([
+      fetchAllInvoices(supabase, range),
       range.previousFrom
-        ? fetchAllSales(supabase, previousRange)
+        ? fetchAllInvoices(supabase, previousRange)
         : Promise.resolve([]),
       fetchAllCustomers(supabase),
       fetchAllFollowups(supabase, range),
-      fetchAllInvoices(supabase, range),
     ]);
     items = await fetchInvoiceItems(
       supabase,
@@ -108,23 +105,31 @@ export default async function ReportsPage({
 
   const customerMap = new Map(customers.map((customer) => [customer.id, customer]));
   const invoiceMap = new Map(invoices.map((invoice) => [invoice.id, invoice]));
-  const totalSales = sales.reduce((sum, sale) => sum + numeric(sale.amount), 0);
-  const previousTotalSales = previousSales.reduce(
-    (sum, sale) => sum + numeric(sale.amount),
+  const totalSales = invoices.reduce(
+    (sum, invoice) => sum + numeric(invoice.total_amount),
     0,
   );
-  const averageInvoice = sales.length ? totalSales / sales.length : 0;
-  const activeCustomerIds = new Set(sales.map((sale) => sale.customer_id));
+  const previousTotalSales = previousInvoices.reduce(
+    (sum, invoice) => sum + numeric(invoice.total_amount),
+    0,
+  );
+  const averageInvoice = invoices.length ? totalSales / invoices.length : 0;
+  const activeCustomerIds = new Set(
+    invoices.map((invoice) => invoice.customer_id),
+  );
   const comparison = range.previousFrom
     ? percentChange(totalSales, previousTotalSales)
     : null;
 
   const customerTotals = new Map<string, { amount: number; count: number }>();
-  for (const sale of sales) {
-    const current = customerTotals.get(sale.customer_id) ?? { amount: 0, count: 0 };
-    current.amount += numeric(sale.amount);
+  for (const invoice of invoices) {
+    const current = customerTotals.get(invoice.customer_id) ?? {
+      amount: 0,
+      count: 0,
+    };
+    current.amount += numeric(invoice.total_amount);
     current.count += 1;
-    customerTotals.set(sale.customer_id, current);
+    customerTotals.set(invoice.customer_id, current);
   }
   const topCustomers = [...customerTotals.entries()]
     .map(([customerId, stats]) => ({
@@ -176,9 +181,9 @@ export default async function ReportsPage({
   }
 
   const trend = new Map<string, number>();
-  for (const sale of sales) {
-    const key = monthKey(sale.sale_date);
-    trend.set(key, (trend.get(key) ?? 0) + numeric(sale.amount));
+  for (const invoice of invoices) {
+    const key = monthKey(invoice.invoice_date);
+    trend.set(key, (trend.get(key) ?? 0) + numeric(invoice.total_amount));
   }
   const trendRows = [...trend.entries()].reverse().slice(-8);
   const trendMax = Math.max(1, ...trendRows.map(([, amount]) => amount));
@@ -187,7 +192,7 @@ export default async function ReportsPage({
     <AppShell
       active="reports"
       title="گزارش‌های فروش"
-      subtitle="تحلیل فروش، مشتریان، کالاها و نتیجه پیگیری‌ها"
+      subtitle="تحلیل فاکتورهای معتبر، مشتریان، کالاها و نتیجه پیگیری‌ها"
     >
       <section className={styles.periodBar}>
         <form className={styles.periodForm} action="/reports" method="get">
@@ -225,14 +230,14 @@ export default async function ReportsPage({
           <small className={compareClass(comparison)}>{compareText(comparison)}</small>
         </article>
         <article className={styles.metric}>
-          <span>تعداد فاکتور یا فروش</span>
-          <strong>{number.format(sales.length)}</strong>
+          <span>تعداد فاکتور</span>
+          <strong>{number.format(invoices.length)}</strong>
           <small>میانگین هر فاکتور: {formatMoney(averageInvoice)}</small>
         </article>
         <article className={styles.metric}>
           <span>مشتریان خریدار</span>
           <strong>{number.format(activeCustomerIds.size)}</strong>
-          <small>مشتریانی که در این بازه حداقل یک خرید داشته‌اند</small>
+          <small>مشتریانی که در این بازه حداقل یک فاکتور معتبر داشته‌اند</small>
         </article>
         <article className={styles.metric}>
           <span>پیگیری‌های ثبت‌شده</span>
@@ -248,7 +253,7 @@ export default async function ReportsPage({
           <header className={styles.panelHeader}>
             <div>
               <h2>مشتریان پرفروش</h2>
-              <p>بیشترین مبلغ خرید در بازه انتخاب‌شده</p>
+              <p>بیشترین مجموع فاکتور معتبر در بازه انتخاب‌شده</p>
             </div>
             <span className={styles.badge}>{number.format(topCustomers.length)} مشتری</span>
           </header>
@@ -263,14 +268,14 @@ export default async function ReportsPage({
                   <span className={styles.rank}>{number.format(index + 1)}</span>
                   <span>
                     <strong>{customer.name}</strong>
-                    <small>{number.format(customer.count)} خرید در این بازه</small>
+                    <small>{number.format(customer.count)} فاکتور در این بازه</small>
                   </span>
                   <span className={styles.rankValue}>{formatMoney(customer.amount)}</span>
                 </Link>
               ))}
             </div>
           ) : (
-            <div className={styles.empty}>در این بازه فروش ثبت نشده است.</div>
+            <div className={styles.empty}>در این بازه فاکتور فروشی ثبت نشده است.</div>
           )}
         </article>
 
@@ -278,7 +283,7 @@ export default async function ReportsPage({
           <header className={styles.panelHeader}>
             <div>
               <h2>کالاهای پرفروش</h2>
-              <p>بر اساس اقلام ثبت‌شده در فاکتورهای هلو</p>
+              <p>بر اساس اقلام ثبت‌شده در فاکتورهای معتبر</p>
             </div>
             <span className={styles.badge}>{number.format(topProducts.length)} کالا</span>
           </header>
@@ -306,7 +311,7 @@ export default async function ReportsPage({
           <header className={styles.panelHeader}>
             <div>
               <h2>روند فروش ماهانه</h2>
-              <p>جمع فروش ثبت‌شده در هر ماه شمسی داخل بازه گزارش</p>
+              <p>جمع فاکتورهای معتبر در هر ماه شمسی داخل بازه گزارش</p>
             </div>
           </header>
           {trendRows.length ? (
@@ -325,7 +330,7 @@ export default async function ReportsPage({
               ))}
             </div>
           ) : (
-            <div className={styles.empty}>برای نمایش نمودار، فروش ثبت‌شده لازم است.</div>
+            <div className={styles.empty}>برای نمایش نمودار، فاکتور فروش لازم است.</div>
           )}
         </article>
 
@@ -389,8 +394,8 @@ export default async function ReportsPage({
         </p>
         <div className={styles.exportGrid}>
           {[
-            ["customers", "بانک مشتریان", "نام، موبایل، اولویت و سابقه خرید"],
-            ["sales", "ریز فروش", "تاریخ، مشتری، فاکتور، سند و مبلغ"],
+            ["customers", "بانک مشتریان", "نام، موبایل، ارزش تجاری و سابقه خرید"],
+            ["sales", "ریز فاکتورهای فروش", "تاریخ، مشتری، فاکتور، سند و مبلغ"],
             ["products", "اقلام فاکتور", "کالا، تعداد، قیمت و مشتری"],
             ["followups", "پیگیری‌ها", "نتیجه تماس، یادداشت و موعد بعدی"],
           ].map(([type, title, description]) => (
@@ -421,13 +426,13 @@ export default async function ReportsPage({
           <input type="hidden" name="format" value="xls" />
           <input type="hidden" name="period" value={period} />
           <div className={styles.exportFilters}>
-            <select name="priority" defaultValue="urgent" aria-label="اولویت مشتری">
-              <option value="">همه اولویت‌ها</option>
-              <option value="urgent">ویژه و اولویت زیاد</option>
+            <select name="priority" defaultValue="urgent" aria-label="ارزش تجاری مشتری">
+              <option value="">همه ارزش‌های تجاری</option>
+              <option value="urgent">ویژه و کلیدی</option>
               <option value="vip">فقط ویژه</option>
-              <option value="high">فقط اولویت زیاد</option>
-              <option value="normal">فقط متوسط</option>
-              <option value="low">فقط کم</option>
+              <option value="high">فقط کلیدی</option>
+              <option value="normal">فقط مهم</option>
+              <option value="low">فقط عادی</option>
             </select>
             <input
               type="number"

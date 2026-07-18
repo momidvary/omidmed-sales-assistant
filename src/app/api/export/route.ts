@@ -4,7 +4,6 @@ import {
   fetchAllCustomers,
   fetchAllFollowups,
   fetchAllInvoices,
-  fetchAllSales,
   fetchInvoiceItems,
 } from "@/lib/reports/data";
 import {
@@ -43,9 +42,9 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 const priorityLabels: Record<string, string> = {
-  low: "کم",
-  normal: "متوسط",
-  high: "زیاد",
+  low: "عادی",
+  normal: "مهم",
+  high: "کلیدی",
   vip: "ویژه",
 };
 
@@ -180,7 +179,7 @@ export async function GET(request: NextRequest) {
         { key: "name", label: "نام مشتری" },
         { key: "phone", label: "موبایل" },
         { key: "city", label: "شهر" },
-        { key: "priority", label: "اولویت" },
+        { key: "priority", label: "ارزش تجاری" },
         { key: "last_purchase", label: "آخرین خرید" },
         { key: "inactive_days", label: "روز از آخرین خرید" },
         { key: "purchase_count", label: "تعداد خرید" },
@@ -199,14 +198,13 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === "sales") {
-      const sales = await fetchAllSales(supabase, range);
-      const rows = sales.map((sale) => ({
-        date: formatDate(sale.sale_date),
-        customer: customerMap.get(sale.customer_id)?.name ?? "مشتری نامشخص",
-        invoice: sale.invoice_number ?? "",
-        document: sale.document_number ?? "",
-        amount: numeric(sale.amount),
-        description: sale.description ?? "",
+      const invoices = await fetchAllInvoices(supabase, range);
+      const rows = invoices.map((invoice) => ({
+        date: formatDate(invoice.invoice_date),
+        customer: customerMap.get(invoice.customer_id)?.name ?? "مشتری نامشخص",
+        invoice: invoice.invoice_number,
+        document: invoice.document_number ?? "",
+        amount: numeric(invoice.total_amount),
       }));
       const columns: TableColumn<(typeof rows)[number]>[] = [
         { key: "date", label: "تاریخ" },
@@ -214,12 +212,11 @@ export async function GET(request: NextRequest) {
         { key: "invoice", label: "شماره فاکتور" },
         { key: "document", label: "شماره سند" },
         { key: "amount", label: "مبلغ" },
-        { key: "description", label: "توضیحات" },
       ];
       return makeFile({
         format,
-        name: `sales-${filenamePeriod(period)}`,
-        sheet: "فروش",
+        name: `invoices-${filenamePeriod(period)}`,
+        sheet: "فاکتورهای فروش",
         columns,
         rows,
       });

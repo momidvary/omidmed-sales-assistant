@@ -166,7 +166,7 @@ export async function buildAssistantContext({
   const [customerResult, followupResult, invoiceResult, productResult] =
     await Promise.all([
       supabase
-        .from("customer_sales_summary")
+        .from("customer_crm_summary")
         .select(
           "id,name,status,priority,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase",
         )
@@ -182,6 +182,7 @@ export async function buildAssistantContext({
         .select(
           "customer_id,invoice_number,invoice_date,total_amount,discount_amount,account_balance_amount,account_balance_status",
         )
+        .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
         .order("invoice_date", { ascending: false })
         .limit(5000),
       supabase
@@ -288,9 +289,9 @@ export async function buildAssistantContext({
       .map((invoice) => ({
         invoice_number: invoice.invoice_number,
         date_jalali: formatDate(invoice.invoice_date),
-        amount: numeric(invoice.total_amount),
-        discount: numeric(invoice.discount_amount),
-        balance: numeric(invoice.account_balance_amount),
+        amount_toman: numeric(invoice.total_amount),
+        discount_toman: numeric(invoice.discount_amount),
+        balance_toman: numeric(invoice.account_balance_amount),
         balance_status: invoice.account_balance_status,
       }));
     const customerProducts = products
@@ -301,7 +302,7 @@ export async function buildAssistantContext({
         name: product.product_name,
         invoice_count: numeric(product.invoice_count),
         total_quantity: numeric(product.total_quantity),
-        total_amount: numeric(product.total_amount),
+        total_amount_toman: numeric(product.total_amount),
         last_purchase_jalali: formatDate(product.last_purchase_at),
       }));
 
@@ -310,12 +311,12 @@ export async function buildAssistantContext({
       name: customer.name,
       profile_url: `/customers/${customer.id}`,
       status: customer.status,
-      priority: customer.priority,
+      customer_value: customer.priority,
       last_purchase_jalali: formatDate(customer.last_purchase_at),
       days_since_last_purchase: numeric(customer.days_since_last_purchase),
       average_purchase_gap_days: numeric(customer.avg_purchase_gap_days),
       purchase_count: numeric(customer.purchase_count),
-      total_sales: numeric(customer.total_sales),
+      total_sales_toman: numeric(customer.total_sales),
       next_followup_at: customer.next_followup_at,
       latest_followup: latest
         ? {
@@ -341,7 +342,7 @@ export async function buildAssistantContext({
       invoices: invoices.length,
       followups: followups.length,
       product_customer_rows: products.length,
-      total_invoice_sales: invoices.reduce(
+      total_invoice_sales_toman: invoices.reduce(
         (sum, invoice) => sum + numeric(invoice.total_amount),
         0,
       ),
@@ -350,13 +351,13 @@ export async function buildAssistantContext({
       id: customer.id,
       name: customer.name,
       profile_url: `/customers/${customer.id}`,
-      score: customer.score,
-      reasons: customer.reasons,
-      priority: customer.priority,
+      urgency_score: customer.score,
+      urgency_reasons: customer.reasons,
+      customer_value: customer.priority,
       last_purchase_jalali: formatDate(customer.last_purchase_at),
       days_since_last_purchase: numeric(customer.days_since_last_purchase),
       average_purchase_gap_days: numeric(customer.avg_purchase_gap_days),
-      total_sales: numeric(customer.total_sales),
+      total_sales_toman: numeric(customer.total_sales),
       latest_outcome: customer.latestFollowup?.outcome ?? null,
       next_followup_at: customer.next_followup_at,
     })),
@@ -364,12 +365,12 @@ export async function buildAssistantContext({
     top_products: Array.from(topProducts.entries())
       .map(([name, value]) => ({
         name,
-        total_amount: Math.round(value.amount),
+        total_amount_toman: Math.round(value.amount),
         total_quantity: Math.round(value.quantity * 1000) / 1000,
         customer_count: value.customers.size,
         last_purchase_jalali: formatDate(value.last),
       }))
-      .sort((a, b) => b.total_amount - a.total_amount)
+      .sort((a, b) => b.total_amount_toman - a.total_amount_toman)
       .slice(0, 35),
     matched_product_customers: relevantProducts.slice(0, 80).map((product) => ({
       customer_id: product.customer_id,
@@ -378,10 +379,10 @@ export async function buildAssistantContext({
       product_name: product.product_name,
       invoice_count: numeric(product.invoice_count),
       total_quantity: numeric(product.total_quantity),
-      total_amount: numeric(product.total_amount),
+      total_amount_toman: numeric(product.total_amount),
       last_purchase_jalali: formatDate(product.last_purchase_at),
     })),
     focused_customers: selectedCustomerContext,
-    formatting_note: `اعداد پولی بدون تعیین واحد هستند. نمونه نمایش عدد: ${number.format(12500000)}.`,
+    formatting_note: `تمام اعداد پولی بر حسب تومان هستند. نمونه نمایش: ${number.format(12500000)} تومان. customer_value ارزش تجاری دستی است و urgency_score فوریت خودکار پیگیری است.`,
   };
 }

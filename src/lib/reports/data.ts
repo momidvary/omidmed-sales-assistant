@@ -90,7 +90,7 @@ export async function fetchAllCustomers(supabase: SupabaseClient) {
   const rows: CustomerSummaryRow[] = [];
   for (let start = 0; ; start += PAGE_SIZE) {
     const { data, error } = await supabase
-      .from("customer_sales_summary")
+      .from("customer_crm_summary")
       .select(
         "id,name,phone,normalized_phone,city,address,status,priority,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,next_followup_at",
       )
@@ -144,6 +144,7 @@ export async function fetchAllInvoices(
       .select(
         "id,customer_id,invoice_number,document_number,invoice_date,total_amount",
       )
+      .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
       .order("invoice_date", { ascending: false })
       .range(start, start + PAGE_SIZE - 1);
 
