@@ -1,148 +1,195 @@
--- OmidMed Sales Assistant
--- 014: Reconcile cross-identity duplicate Holoo invoices before unique checks.
+-- Reconcile legacy invoice identities before the Holoo batch implementation
+-- writes the full invoice and rebuilds its items.
 --
--- The Holoo receiver can encounter two historic invoice rows where one row
--- owns the Holoo/invoice identity and another row owns the document number.
--- Updating either row directly then violates one of the existing unique
--- indexes. This trigger keeps all unique indexes intact and removes only the
--- conflicting historic duplicate immediately before the incoming holo_agent
--- row is inserted or updated. The RPC recreates invoice_items from the current
--- Holoo payload in the same transaction, so stale items belonging to the
--- duplicate rows are intentionally removed.
+-- The public wrapper and the v13 implementation execute in one PostgreSQL
+-- transaction. Any failure rolls back candidate locks, item deletion,
+-- duplicate deletion, invoice updates, and item reconstruction together.
 
 begin;
 
--- Fail closed if a future migration adds another table that references
--- invoices. The reconciliation below is intentionally scoped to the currently
--- known invoice_items relation.
-do $$
-declare
-  v_unexpected_references text;
-begin
-  select string_agg(
-    format('%I.%I (%I)', child_ns.nspname, child.relname, con.conname),
-    ', '
-  )
-  into v_unexpected_references
-  from pg_constraint con
-  join pg_class parent
-    on parent.oid = con.confrelid
-  join pg_namespace parent_ns
-    on parent_ns.oid = parent.relnamespace
-  join pg_class child
-    on child.oid = con.conrelid
-  join pg_namespace child_ns
-    on child_ns.oid = child.relnamespace
-  where con.contype = 'f'
-    and parent_ns.nspname = 'public'
-    and parent.relname = 'invoices'
-    and not (
-      child_ns.nspname = 'public'
-      and child.relname = 'invoice_items'
-    );
+alter function public.sync_holoo_agent_batch(uuid, jsonb)
+  rename to sync_holoo_agent_batch_v13;
 
-  if v_unexpected_references is not null then
-    raise exception
-      'Unexpected foreign-key references to public.invoices: %',
-      v_unexpected_references;
-  end if;
-end
-$$;
+revoke all on function public.sync_holoo_agent_batch_v13(uuid, jsonb)
+  from public;
+revoke all on function public.sync_holoo_agent_batch_v13(uuid, jsonb)
+  from anon;
+revoke all on function public.sync_holoo_agent_batch_v13(uuid, jsonb)
+  from authenticated;
+revoke all on function public.sync_holoo_agent_batch_v13(uuid, jsonb)
+  from service_role;
 
-create or replace function public.reconcile_holoo_invoice_identity_before_write()
-returns trigger
+create function public.sync_holoo_agent_batch(
+  p_owner_id uuid,
+  p_payload jsonb
+)
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  v_duplicate_id uuid;
+  v_invoice jsonb;
+  v_fac_code text;
+  v_fac_type text;
+  v_invoice_number text;
+  v_document_number text;
+  v_external_key text;
+
+  v_candidate_ids uuid[];
+  v_document_candidate_id uuid;
+  v_holo_candidate_id uuid;
+  v_invoice_number_candidate_id uuid;
+  v_canonical_id uuid;
 begin
-  -- Never alter manual or QRP imports. This repair is limited to the automatic
-  -- Windows Holoo agent and requires a real Holoo identity.
-  if new.source is distinct from 'holo_agent'
-     or nullif(btrim(new.holo_fac_code), '') is null then
-    return new;
+  if p_owner_id is null then
+    raise exception 'Owner id is required';
   end if;
 
-  -- Lock and remove only rows that represent the same Holoo invoice through a
-  -- different unique identity. The incoming row remains canonical. Existing
-  -- unique indexes are preserved and will still reject unrelated duplicates.
-  for v_duplicate_id in
-    select i.id
-    from public.invoices i
-    where i.owner_id = new.owner_id
-      and i.id <> new.id
-      and (
-        (
-          nullif(btrim(new.holo_fac_type), '') is not null
-          and i.holo_fac_type = new.holo_fac_type
-          and i.holo_fac_code = new.holo_fac_code
-        )
-        or (
-          nullif(btrim(new.invoice_number), '') is not null
-          and i.invoice_number = new.invoice_number
-        )
-        or (
-          nullif(btrim(new.document_number), '') is not null
-          and i.document_number = new.document_number
-        )
-        or (
-          nullif(btrim(new.external_key), '') is not null
-          and i.source = new.source
-          and i.external_key = new.external_key
-        )
+  if jsonb_typeof(p_payload->'invoices') = 'array' then
+    for v_invoice in
+      select value
+      from jsonb_array_elements(p_payload->'invoices')
+    loop
+      v_fac_code :=
+        nullif(btrim(v_invoice->>'facCode'), '');
+
+      v_fac_type := coalesce(
+        nullif(btrim(v_invoice->>'facType'), ''),
+        'F'
+      );
+
+      v_invoice_number := coalesce(
+        nullif(btrim(v_invoice->>'invoiceNumber'), ''),
+        v_fac_code
+      );
+
+      v_document_number :=
+        nullif(btrim(v_invoice->>'documentNumber'), '');
+
+      if v_fac_code is null or v_fac_type <> 'F' then
+        continue;
+      end if;
+
+      v_external_key :=
+        'holoo:' || v_fac_type || ':' || v_fac_code;
+
+      -- Lock every row identified by any incoming natural key. Ordering the
+      -- locks by UUID keeps concurrent batches from taking the same locks in
+      -- different orders.
+      select coalesce(
+        array_agg(locked.id order by locked.id),
+        '{}'::uuid[]
       )
-    order by i.created_at, i.id
-    for update
-  loop
-    delete from public.invoice_items
-    where owner_id = new.owner_id
-      and invoice_id = v_duplicate_id;
+      into v_candidate_ids
+      from (
+        select i.id
+        from public.invoices i
+        where i.owner_id = p_owner_id
+          and (
+            (
+              i.holo_fac_type = v_fac_type
+              and i.holo_fac_code = v_fac_code
+            )
+            or i.invoice_number = v_invoice_number
+            or (
+              v_document_number is not null
+              and i.document_number = v_document_number
+            )
+          )
+        order by i.id
+        for update
+      ) as locked;
 
-    delete from public.invoices
-    where owner_id = new.owner_id
-      and id = v_duplicate_id;
-  end loop;
+      if cardinality(v_candidate_ids) <= 1 then
+        continue;
+      end if;
 
-  return new;
+      v_document_candidate_id := null;
+      v_holo_candidate_id := null;
+      v_invoice_number_candidate_id := null;
+
+      if v_document_number is not null then
+        select i.id
+        into v_document_candidate_id
+        from public.invoices i
+        where i.id = any(v_candidate_ids)
+          and i.document_number = v_document_number
+        order by i.id
+        limit 1;
+      end if;
+
+      select i.id
+      into v_holo_candidate_id
+      from public.invoices i
+      where i.id = any(v_candidate_ids)
+        and i.holo_fac_type = v_fac_type
+        and i.holo_fac_code = v_fac_code
+      order by i.id
+      limit 1;
+
+      select i.id
+      into v_invoice_number_candidate_id
+      from public.invoices i
+      where i.id = any(v_candidate_ids)
+        and i.invoice_number = v_invoice_number
+      order by i.id
+      limit 1;
+
+      v_canonical_id := coalesce(
+        v_document_candidate_id,
+        v_holo_candidate_id,
+        v_invoice_number_candidate_id
+      );
+
+      if v_canonical_id is null then
+        raise exception
+          'Unable to choose a canonical Holoo invoice candidate';
+      end if;
+
+      -- invoice_items is the only FK dependency on invoices. Remove every
+      -- candidate's items first; the v13 implementation below rebuilds the
+      -- canonical invoice items from this same payload.
+      delete from public.invoice_items
+      where owner_id = p_owner_id
+        and invoice_id = any(v_candidate_ids);
+
+      delete from public.invoices
+      where owner_id = p_owner_id
+        and id = any(v_candidate_ids)
+        and id <> v_canonical_id;
+
+      -- Give the canonical row the Holoo identity before delegating. The
+      -- implementation then finds this row by Holoo identity and applies all
+      -- incoming header fields, including invoice/document numbers and the
+      -- final external key, before rebuilding its items.
+      update public.invoices
+      set
+        source = 'holo_agent',
+        external_key = v_external_key,
+        holo_fac_code = v_fac_code,
+        holo_fac_type = v_fac_type,
+        holo_is_deleted = false,
+        updated_at = now()
+      where owner_id = p_owner_id
+        and id = v_canonical_id;
+    end loop;
+  end if;
+
+  return public.sync_holoo_agent_batch_v13(
+    p_owner_id,
+    p_payload
+  );
 end;
 $$;
 
-revoke all on function public.reconcile_holoo_invoice_identity_before_write()
+revoke all on function public.sync_holoo_agent_batch(uuid, jsonb)
   from public;
-revoke all on function public.reconcile_holoo_invoice_identity_before_write()
+revoke all on function public.sync_holoo_agent_batch(uuid, jsonb)
   from anon;
-revoke all on function public.reconcile_holoo_invoice_identity_before_write()
+revoke all on function public.sync_holoo_agent_batch(uuid, jsonb)
   from authenticated;
-
--- The trigger runs before PostgreSQL evaluates the unique indexes, which is
--- precisely where the cross-identity conflict must be reconciled.
-drop trigger if exists invoices_reconcile_holoo_identity
-  on public.invoices;
-
-create trigger invoices_reconcile_holoo_identity
-before insert or update of
-  owner_id,
-  source,
-  external_key,
-  invoice_number,
-  document_number,
-  holo_fac_type,
-  holo_fac_code
-on public.invoices
-for each row
-execute function public.reconcile_holoo_invoice_identity_before_write();
+grant execute on function public.sync_holoo_agent_batch(uuid, jsonb)
+  to service_role;
 
 commit;
-
--- Metadata-only verification.
-select
-  trigger_name,
-  event_manipulation,
-  action_timing
-from information_schema.triggers
-where event_object_schema = 'public'
-  and event_object_table = 'invoices'
-  and trigger_name = 'invoices_reconcile_holoo_identity'
-order by event_manipulation;
