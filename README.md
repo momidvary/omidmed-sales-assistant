@@ -10,7 +10,7 @@
 - آرشیو طرح چاپ کیف و فاکتورهای مشتری
 - کمپین‌های فروش و پیگیری قیمت‌های باز
 - گزارش‌های فروش و خروجی Excel/CSV
-- دستیار هوش مصنوعی فروش
+- دستیار هوش مصنوعی فروش\n- استودیو محتوای هوشمند برای تولید متن و تصویر، تقویم اینستاگرام و تأیید مدیر
 - حسابداری مدیریتی کارگاه
   - تأمین‌کنندگان و فاکتورهای خرید
   - مواد اولیه و قیمت جایگزینی
@@ -37,14 +37,14 @@ npm run dev
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 OPENAI_API_KEY=
-OPENAI_MODEL=
+OPENAI_MODEL=\nOPENAI_CONTENT_MODEL=\nOPENAI_IMAGE_MODEL=gpt-image-2\nOPENAI_IMAGE_QUALITY=medium\nSUPABASE_SERVICE_ROLE_KEY=
 ```
 
 فایل `.env.local` نباید وارد GitHub شود.
 
 ## دیتابیس
 
-فایل‌های پوشه `supabase/migrations` باید به ترتیب شماره در SQL Editor سوپابیس اجرا شوند. برای افزودن حسابداری مدیریتی، فایل `006_management_accounting.sql` اجرا می‌شود.
+فایل‌های پوشه `supabase/migrations` باید به ترتیب شماره در SQL Editor سوپابیس اجرا شوند. برای افزودن حسابداری مدیریتی، فایل `006_management_accounting.sql` اجرا می‌شود. برای راه‌اندازی استودیو محتوا، فایل `007_content_studio.sql` را نیز اجرا کنید.
 
 ## نکته مالی
 
