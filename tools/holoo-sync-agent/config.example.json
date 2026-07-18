@@ -1,0 +1,32 @@
+{
+  "sql": {
+    "server": "localhost\\TNC",
+    "database": "Holoo1",
+    "integratedSecurity": true,
+    "connectTimeoutSeconds": 15,
+    "commandTimeoutSeconds": 120,
+    "encrypt": false,
+    "trustServerCertificate": true
+  },
+  "api": {
+    "url": "https://omidmed-sales-assistant.vercel.app/api/holo-agent/sync",
+    "secretFile": "agent-secret.dpapi",
+    "timeoutSeconds": 60,
+    "retryCount": 5,
+    "retryInitialDelaySeconds": 2,
+    "retryMaxDelaySeconds": 30
+  },
+  "sync": {
+    "customerBatchSize": 150,
+    "invoiceBatchSize": 25,
+    "maxPayloadBytes": 2250000,
+    "incrementalOverlapMinutes": 15,
+    "sourceTimeZone": "Iran Standard Time"
+  },
+  "storage": {
+    "dataDirectory": ".holoo-sync-agent",
+    "stateFile": "state.json",
+    "logDirectory": "logs",
+    "logRetentionDays": 30
+  }
+}
