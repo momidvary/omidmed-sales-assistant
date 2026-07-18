@@ -2,7 +2,7 @@
 param(
     [string]$InstallDirectory = (Join-Path $env:ProgramData "OmidMed\HolooSyncAgent"),
 
-    [string]$ConfigTemplate = (Join-Path $PSScriptRoot "config.example.json"),
+    [string]$ConfigTemplate,
 
     [Security.SecureString]$AgentSecret,
 
@@ -11,6 +11,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ConfigTemplate)) {
+    $ConfigTemplate = Join-Path $PSScriptRoot "config.example.json"
+}
 
 $IncrementalTaskName = "OmidMed Holoo Incremental Sync"
 $WeeklyTaskName = "OmidMed Holoo Weekly Full Sync"
