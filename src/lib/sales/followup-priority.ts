@@ -28,12 +28,15 @@ export type FollowupCandidate = CustomerForFollowup & {
   isPurchaseDue: boolean;
   isRequestedPrice: boolean;
   isPriorityCustomer: boolean;
+  hasReliablePurchaseCycle: boolean;
+  purchaseCount: number;
   overdueDays: number;
   cycleRatio: number | null;
   latestFollowup: FollowupForScoring | null;
 };
 
 const DAY_MS = 86_400_000;
+const MIN_PURCHASES_FOR_CYCLE = 2;
 
 function numeric(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -90,8 +93,10 @@ export function buildFollowupCandidates({
   const salesValues = customers
     .map((customer) => numeric(customer.total_sales))
     .sort((a, b) => b - a);
-  const topTenThreshold = salesValues[Math.max(0, Math.floor(salesValues.length * 0.1) - 1)] ?? 0;
-  const topQuarterThreshold = salesValues[Math.max(0, Math.floor(salesValues.length * 0.25) - 1)] ?? 0;
+  const topTenThreshold =
+    salesValues[Math.max(0, Math.floor(salesValues.length * 0.1) - 1)] ?? 0;
+  const topQuarterThreshold =
+    salesValues[Math.max(0, Math.floor(salesValues.length * 0.25) - 1)] ?? 0;
 
   return customers
     .filter((customer) => customer.status !== "lost")
@@ -107,23 +112,29 @@ export function buildFollowupCandidates({
       const isOverdue = Boolean(
         nextFollowup && nextFollowup.getTime() < todayStart.getTime(),
       );
-      const overdueDays = isOverdue && nextFollowup
-        ? Math.max(
-            1,
-            Math.floor(
-              (todayStart.getTime() - nextFollowup.getTime()) / DAY_MS,
-            ),
-          )
-        : 0;
+      const overdueDays =
+        isOverdue && nextFollowup
+          ? Math.max(
+              1,
+              Math.floor(
+                (todayStart.getTime() - nextFollowup.getTime()) / DAY_MS,
+              ),
+            )
+          : 0;
 
+      const purchaseCount = Math.max(
+        0,
+        Math.round(numeric(customer.purchase_count)),
+      );
       const averageGap = numeric(customer.avg_purchase_gap_days);
       const daysSinceLastPurchase = numeric(customer.days_since_last_purchase);
-      const cycleRatio = averageGap > 0
+      const hasReliablePurchaseCycle =
+        purchaseCount >= MIN_PURCHASES_FOR_CYCLE && averageGap >= 7;
+      const cycleRatio = hasReliablePurchaseCycle
         ? daysSinceLastPurchase / averageGap
         : null;
       const isPurchaseDue = Boolean(
         cycleRatio !== null &&
-          averageGap >= 7 &&
           daysSinceLastPurchase >= Math.max(7, averageGap * 0.85),
       );
       const isRequestedPrice = Boolean(
@@ -205,19 +216,40 @@ export function buildFollowupCandidates({
         isPurchaseDue,
         isRequestedPrice,
         isPriorityCustomer,
+        hasReliablePurchaseCycle,
+        purchaseCount,
         overdueDays,
         cycleRatio,
         latestFollowup,
       };
     })
-    .filter(
-      (customer) =>
+    .filter((customer) => {
+      if (
         customer.isScheduled ||
         customer.isPurchaseDue ||
-        customer.isRequestedPrice ||
-        (customer.isPriorityCustomer &&
-          numeric(customer.days_since_last_purchase) >= 30),
-    )
+        customer.isRequestedPrice
+      ) {
+        return true;
+      }
+
+      // A manual VIP/high label can strengthen a real purchase pattern, but it
+      // must not turn a one-off or annual customer into a recurring priority.
+      if (
+        customer.isPriorityCustomer &&
+        customer.hasReliablePurchaseCycle &&
+        customer.purchaseCount >= MIN_PURCHASES_FOR_CYCLE
+      ) {
+        const averageGap = numeric(customer.avg_purchase_gap_days);
+        const daysSinceLastPurchase = numeric(
+          customer.days_since_last_purchase,
+        );
+        return (
+          daysSinceLastPurchase >= Math.max(30, averageGap * 0.75)
+        );
+      }
+
+      return false;
+    })
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       return numeric(b.total_sales) - numeric(a.total_sales);
