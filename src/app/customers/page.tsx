@@ -5,8 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import styles from "./customers.module.css";
 
 const number = new Intl.NumberFormat("fa-IR");
+const PAGE_SIZE = 100;
 
-function formatMoney(value: number | string | null) {
+function formatMoney(value: number | string | null | undefined) {
   return number.format(Math.round(Number(value ?? 0)));
 }
 
@@ -15,6 +16,22 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("fa-IR").format(
     new Date(`${value}T12:00:00`),
   );
+}
+
+function parsePage(value: string | undefined) {
+  const parsed = Number.parseInt(value ?? "1", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function paginationPages(currentPage: number, totalPages: number) {
+  const pages = new Set<number>([1, totalPages]);
+
+  for (let offset = -2; offset <= 2; offset += 1) {
+    const page = currentPage + offset;
+    if (page >= 1 && page <= totalPages) pages.add(page);
+  }
+
+  return Array.from(pages).sort((left, right) => left - right);
 }
 
 const priorityLabel: Record<string, string> = {
@@ -67,8 +84,31 @@ const allowedStatusFilters = new Set([
   "archived",
 ]);
 
-function statusHref(status: string) {
-  return status === "all" ? "/customers" : `/customers?status=${status}`;
+type CustomersHrefOptions = {
+  page?: number;
+  search?: string;
+  priority?: string;
+  product?: string;
+  status?: string;
+};
+
+function customersHref({
+  page = 1,
+  search = "",
+  priority = "",
+  product = "",
+  status = "all",
+}: CustomersHrefOptions) {
+  const query = new URLSearchParams();
+
+  if (search) query.set("q", search);
+  if (product) query.set("product", product);
+  if (priority) query.set("priority", priority);
+  if (status !== "all") query.set("status", status);
+  if (page > 1) query.set("page", String(page));
+
+  const value = query.toString();
+  return value ? `/customers?${value}` : "/customers";
 }
 
 export default async function CustomersPage({
@@ -79,6 +119,7 @@ export default async function CustomersPage({
     priority?: string;
     product?: string;
     status?: string;
+    page?: string;
     created?: string;
     archived?: string;
     deleted?: string;
@@ -89,6 +130,9 @@ export default async function CustomersPage({
   const requestedPriority = (params.priority ?? "").trim();
   const requestedStatus = (params.status ?? "all").trim();
   const productSearch = (params.product ?? "").trim().slice(0, 100);
+  const currentPage = parsePage(params.page);
+  const from = (currentPage - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
 
   const priorityFilter = allowedPriorityFilters.has(requestedPriority)
     ? requestedPriority
@@ -134,7 +178,7 @@ export default async function CustomersPage({
     )
     .order("total_sales", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(200);
+    .range(from, to);
 
   if (statusFilter === "archived") {
     query = query.not("archived_at", "is", null);
@@ -178,6 +222,11 @@ export default async function CustomersPage({
 
   const { data, count, error } = result;
   const customers = data ?? [];
+  const totalCount = count ?? customers.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const shownFrom = customers.length > 0 ? from + 1 : 0;
+  const shownTo = customers.length > 0 ? from + customers.length : 0;
+  const pages = paginationPages(currentPage, totalPages);
 
   const hasActiveFilter = Boolean(
     search ||
@@ -185,6 +234,15 @@ export default async function CustomersPage({
       productSearch ||
       statusFilter !== "all",
   );
+
+  const pageHref = (page: number) =>
+    customersHref({
+      page,
+      search,
+      priority: priorityFilter,
+      product: productSearch,
+      status: statusFilter,
+    });
 
   return (
     <AppShell
@@ -220,11 +278,7 @@ export default async function CustomersPage({
             placeholder="نام کالا؛ مثلاً پد اسپانیایی..."
           />
 
-          <input
-            type="hidden"
-            name="status"
-            value={statusFilter}
-          />
+          <input type="hidden" name="status" value={statusFilter} />
 
           <select
             name="priority"
@@ -232,9 +286,7 @@ export default async function CustomersPage({
             aria-label="فیلتر اولویت مشتری"
           >
             <option value="">همه اولویت‌ها</option>
-            <option value="urgent">
-              پیگیری فوری؛ ویژه و زیاد
-            </option>
+            <option value="urgent">پیگیری فوری؛ ویژه و زیاد</option>
             <option value="vip">فقط ویژه</option>
             <option value="high">فقط اولویت زیاد</option>
             <option value="normal">فقط اولویت متوسط</option>
@@ -243,9 +295,7 @@ export default async function CustomersPage({
 
           <button type="submit">اعمال فیلتر</button>
 
-          {hasActiveFilter ? (
-            <Link href="/customers">پاک‌کردن</Link>
-          ) : null}
+          {hasActiveFilter ? <Link href="/customers">پاک‌کردن</Link> : null}
         </form>
 
         <div className={styles.toolbarActions}>
@@ -269,10 +319,7 @@ export default async function CustomersPage({
         </div>
       </section>
 
-      <nav
-        className={styles.statusTabs}
-        aria-label="فیلتر وضعیت مشتری"
-      >
+      <nav className={styles.statusTabs} aria-label="فیلتر وضعیت مشتری">
         {[
           ["all", "همه"],
           ["active", "فعال"],
@@ -286,7 +333,12 @@ export default async function CustomersPage({
             className={`${styles.statusTab} ${
               statusFilter === value ? styles.activeTab : ""
             }`}
-            href={statusHref(value)}
+            href={customersHref({
+              search,
+              priority: priorityFilter,
+              product: productSearch,
+              status: value,
+            })}
           >
             {label}
           </Link>
@@ -295,8 +347,8 @@ export default async function CustomersPage({
 
       <section className={styles.summary}>
         <div>
-          <span>تعداد نتیجه</span>
-          <strong>{number.format(count ?? customers.length)}</strong>
+          <span>تعداد کل نتیجه</span>
+          <strong>{number.format(totalCount)}</strong>
         </div>
 
         <div className={styles.summaryDetails}>
@@ -313,14 +365,13 @@ export default async function CustomersPage({
           ) : null}
 
           {productSearch ? (
-            <span className={styles.activeFilter}>
-              کالا: {productSearch}
-            </span>
+            <span className={styles.activeFilter}>کالا: {productSearch}</span>
           ) : null}
 
           <p>
-            برای حفظ سرعت، در هر بار حداکثر ۲۰۰ مشتری نمایش
-            داده می‌شود.
+            نمایش {number.format(shownFrom)} تا {number.format(shownTo)} از {" "}
+            {number.format(totalCount)} مشتری؛ صفحه {number.format(currentPage)} از {" "}
+            {number.format(totalPages)}
           </p>
         </div>
       </section>
@@ -328,16 +379,13 @@ export default async function CustomersPage({
       <section className={styles.tableCard}>
         {productFilterError ? (
           <div className={styles.error}>
-            فیلتر کالا هنوز آماده نیست: {productFilterError}.
-            فایل SQL مرحله هشتم را اجرا کن.
+            خطا در فیلتر کالا: {productFilterError}
           </div>
         ) : null}
 
         {error ? (
           <div className={styles.error}>
             خطا در خواندن مشتریان: {error.message}
-            <br />
-            فایل SQL مرحله ۲۲B را در Supabase اجرا کن.
           </div>
         ) : null}
 
@@ -350,13 +398,17 @@ export default async function CustomersPage({
             <h4>
               {hasActiveFilter
                 ? "مشتری پیدا نشد"
-                : "بانک مشتریان خالی است"}
+                : currentPage > totalPages
+                  ? "این صفحه وجود ندارد"
+                  : "بانک مشتریان خالی است"}
             </h4>
 
             <p>
-              {hasActiveFilter
-                ? "عبارت یا فیلتر دیگری را امتحان کن."
-                : "یک مشتری فعلی یا مشتری بالقوه ثبت کن."}
+              {currentPage > totalPages
+                ? "به صفحه اول بانک مشتریان برگرد."
+                : hasActiveFilter
+                  ? "عبارت یا فیلتر دیگری را امتحان کن."
+                  : "یک مشتری فعلی یا مشتری بالقوه ثبت کن."}
             </p>
           </div>
         ) : (
@@ -406,12 +458,10 @@ export default async function CustomersPage({
                       >
                         {customer.archived_at
                           ? "بایگانی"
-                          : statusLabel[customer.status] ??
-                            customer.status}
+                          : statusLabel[customer.status] ?? customer.status}
                       </span>
 
-                      {customer.status === "prospect" &&
-                      customer.lead_stage ? (
+                      {customer.status === "prospect" && customer.lead_stage ? (
                         <small className={styles.stage}>
                           {leadStageLabel[customer.lead_stage] ??
                             customer.lead_stage}
@@ -430,9 +480,7 @@ export default async function CustomersPage({
                       </small>
                     </td>
 
-                    <td>
-                      {number.format(customer.purchase_count ?? 0)}
-                    </td>
+                    <td>{number.format(customer.purchase_count ?? 0)}</td>
 
                     <td>
                       {customer.status === "prospect" &&
@@ -447,8 +495,7 @@ export default async function CustomersPage({
                           styles[customer.priority]
                         }`}
                       >
-                        {priorityLabel[customer.priority] ??
-                          customer.priority}
+                        {priorityLabel[customer.priority] ?? customer.priority}
                       </span>
                     </td>
 
@@ -476,6 +523,60 @@ export default async function CustomersPage({
           </div>
         )}
       </section>
+
+      {totalPages > 1 ? (
+        <nav
+          className={styles.statusTabs}
+          aria-label="صفحه‌بندی مشتریان"
+          style={{
+            marginTop: 14,
+            marginBottom: 0,
+            justifyContent: "center",
+          }}
+        >
+          {currentPage > 1 ? (
+            <Link className={styles.statusTab} href={pageHref(currentPage - 1)}>
+              صفحه قبل
+            </Link>
+          ) : (
+            <span className={styles.statusTab} style={{ opacity: 0.45 }}>
+              صفحه قبل
+            </span>
+          )}
+
+          {pages.map((page, index) => {
+            const previous = pages[index - 1];
+            return (
+              <span key={page} style={{ display: "contents" }}>
+                {previous && page - previous > 1 ? (
+                  <span className={styles.statusTab} style={{ opacity: 0.6 }}>
+                    …
+                  </span>
+                ) : null}
+                <Link
+                  className={`${styles.statusTab} ${
+                    page === currentPage ? styles.activeTab : ""
+                  }`}
+                  href={pageHref(page)}
+                  aria-current={page === currentPage ? "page" : undefined}
+                >
+                  {number.format(page)}
+                </Link>
+              </span>
+            );
+          })}
+
+          {currentPage < totalPages ? (
+            <Link className={styles.statusTab} href={pageHref(currentPage + 1)}>
+              صفحه بعد
+            </Link>
+          ) : (
+            <span className={styles.statusTab} style={{ opacity: 0.45 }}>
+              صفحه بعد
+            </span>
+          )}
+        </nav>
+      ) : null}
     </AppShell>
   );
 }
