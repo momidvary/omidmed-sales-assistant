@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
-import AppShell from "@/components/app-shell";
+import AppShell from "@/components/app-shell";\nimport CopyInstagramButton from "./copy-instagram-button";
 import { createClient } from "@/lib/supabase/server";
 import styles from "./content-studio.module.css";
 
@@ -405,7 +405,7 @@ export default async function ContentStudioPage({
                     {item.status === "approved" ? (
                       <form action={changeStatus}><input type="hidden" name="item_id" value={item.id} /><input type="hidden" name="status" value="published" /><button className={styles.approve} type="submit">ثبت به‌عنوان منتشرشده</button></form>
                     ) : null}
-                    <button className={styles.copyButton} type="button" title="متن را انتخاب و کپی کن">متن آماده اینستاگرام</button>
+                    <CopyInstagramButton\n                      className={styles.copyButton}\n                      text={[item.caption, item.call_to_action, item.hashtags?.join(" ")].filter(Boolean).join("\\n\\n")}\n                    />
                   </div>
                 </article>
               ))}
