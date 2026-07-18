@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
-    [string]$ConfigPath = (Join-Path $PSScriptRoot "config.json"),
+    [string]$ConfigPath,
 
     [switch]$TestApi
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $PSScriptRoot "config.json"
+}
 
 $agentScript = Join-Path $PSScriptRoot "Invoke-HolooSync.ps1"
 if (-not (Test-Path -LiteralPath $agentScript -PathType Leaf)) {
