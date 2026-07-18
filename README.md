@@ -10,7 +10,8 @@
 - آرشیو طرح چاپ کیف و فاکتورهای مشتری
 - کمپین‌های فروش و پیگیری قیمت‌های باز
 - گزارش‌های فروش و خروجی Excel/CSV
-- دستیار هوش مصنوعی فروش\n- استودیو محتوای هوشمند برای تولید متن و تصویر، تقویم اینستاگرام و تأیید مدیر
+- دستیار هوش مصنوعی فروش
+- استودیو محتوای هوشمند برای تولید متن و تصویر، تقویم اینستاگرام و تأیید مدیر
 - حسابداری مدیریتی کارگاه
   - تأمین‌کنندگان و فاکتورهای خرید
   - مواد اولیه و قیمت جایگزینی
@@ -31,20 +32,24 @@ npm run dev
 
 ## متغیرهای محیطی
 
-فایل `.env.local` باید شامل متغیرهای Supabase باشد. کلید OpenAI اختیاری است و فقط برای صفحه دستیار هوش مصنوعی لازم است.
+فایل `.env.local` باید شامل متغیرهای Supabase باشد. کلید OpenAI برای دستیار هوش مصنوعی و استودیو محتوا استفاده می‌شود.
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
-OPENAI_MODEL=\nOPENAI_CONTENT_MODEL=\nOPENAI_IMAGE_MODEL=gpt-image-2\nOPENAI_IMAGE_QUALITY=medium\nSUPABASE_SERVICE_ROLE_KEY=
+OPENAI_MODEL=gpt-5.2
+OPENAI_CONTENT_MODEL=gpt-5.2
+OPENAI_IMAGE_MODEL=gpt-image-1
+OPENAI_IMAGE_QUALITY=medium
 ```
 
 فایل `.env.local` نباید وارد GitHub شود.
 
 ## دیتابیس
 
-فایل‌های پوشه `supabase/migrations` باید به ترتیب شماره در SQL Editor سوپابیس اجرا شوند. برای افزودن حسابداری مدیریتی، فایل `006_management_accounting.sql` اجرا می‌شود. برای راه‌اندازی استودیو محتوا، فایل `007_content_studio.sql` را نیز اجرا کنید.
+فایل‌های پوشه `supabase/migrations` باید به ترتیب شماره اجرا شوند. برای راه‌اندازی استودیو محتوا، migration شماره `015_content_studio.sql` باید بعد از migration شماره 014 اعمال شود.
 
 ## نکته مالی
 
