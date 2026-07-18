@@ -3,7 +3,7 @@ param(
     [ValidateSet("initial", "incremental", "weekly_full", "manual_full", "dry_run")]
     [string]$Mode = "incremental",
 
-    [string]$ConfigPath = (Join-Path $PSScriptRoot "config.json"),
+    [string]$ConfigPath,
 
     [switch]$ConnectionTestOnly,
 
@@ -12,6 +12,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $PSScriptRoot "config.json"
+}
 
 $script:LogFile = $null
 $script:LogRetentionDays = 30
