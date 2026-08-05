@@ -4,7 +4,7 @@ function statusText(value: unknown) {
   return value == null ? "" : String(value).trim();
 }
 
-function classifyDelivery(label: string) {
+function classifyDelivery(label: string, code: string | null) {
   const compact = label.replace(/\s+/g, "");
 
   if (
@@ -19,7 +19,50 @@ function classifyDelivery(label: string) {
     return "delivered" as const;
   }
 
+  if (code === "-1") {
+    return "delivered" as const;
+  }
+
+  if (code === "200") {
+    return "undelivered" as const;
+  }
+
+  if (/خطا|نامشخص|یافتنشد|گزارش/.test(compact)) {
+    return "unknown" as const;
+  }
+
   return "accepted" as const;
+}
+
+export function parseMeliPayamakDeliveryResults(
+  recIds: string[],
+  json: ProviderJson,
+) {
+  const labels = Array.isArray(json.results) ? json.results : [];
+  const codes = Array.isArray(json.resultsAsCode)
+    ? json.resultsAsCode
+    : [];
+  const resultCount = Math.min(
+    recIds.length,
+    Math.max(labels.length, codes.length),
+  );
+
+  return recIds.slice(0, resultCount).map((recId, index) => {
+    const label = statusText(labels[index]);
+    const code = codes[index] == null ? null : String(codes[index]);
+    const displayLabel =
+      label ||
+      (code
+        ? `وضعیت تحویل با کد ${code}`
+        : "وضعیت تحویل هنوز مشخص نشده است.");
+
+    return {
+      recId,
+      label: displayLabel,
+      code,
+      deliveryStatus: classifyDelivery(displayLabel, code),
+    };
+  });
 }
 
 export async function checkMeliPayamakDelivery(recIds: string[]) {
@@ -71,23 +114,7 @@ export async function checkMeliPayamakDelivery(recIds: string[]) {
       );
     }
 
-    const labels = Array.isArray(json.results) ? json.results : [];
-    const codes = Array.isArray(json.resultsAsCode)
-      ? json.resultsAsCode
-      : [];
-    const providerStatus = statusText(json.status);
-
-    return uniqueRecIds.map((recId, index) => {
-      const label = statusText(labels[index]) || providerStatus;
-      const code = codes[index] == null ? null : String(codes[index]);
-
-      return {
-        recId,
-        label: label || "وضعیت تحویل هنوز مشخص نشده است.",
-        code,
-        deliveryStatus: classifyDelivery(label),
-      };
-    });
+    return parseMeliPayamakDeliveryResults(uniqueRecIds, json);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error("بررسی وضعیت ملی پیامک بیش از ۳۰ ثانیه طول کشید.");

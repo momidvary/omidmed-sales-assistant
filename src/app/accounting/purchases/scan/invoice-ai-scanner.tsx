@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { jalaliToGregorian } from "@/lib/jalali";
@@ -161,6 +161,7 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const previewUrlRef = useRef("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -168,14 +169,12 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
   const [model, setModel] = useState("");
 
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl("");
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
 
   const calculatedSubtotal = draft?.items.reduce((sum, item) => {
     return sum + Math.max(0, numeric(item.quantity) * numeric(item.unitPrice) - numeric(item.discount) + numeric(item.tax));
@@ -186,21 +185,39 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
   const difference = draft ? Math.round(calculatedTotal - numeric(draft.extractedTotal)) : 0;
   const missingMaterialCount = draft?.items.filter((item) => !item.materialId).length ?? 0;
 
+  function replaceSelectedFile(next: File | null) {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+
+    const nextPreviewUrl = next ? URL.createObjectURL(next) : "";
+    previewUrlRef.current = nextPreviewUrl;
+    setPreviewUrl(nextPreviewUrl);
+    setFile(next);
+  }
+
   function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     const next = event.target.files?.[0] ?? null;
     setMessage(null);
     setDraft(null);
     setModel("");
-    if (!next) return setFile(null);
+    if (!next) {
+      replaceSelectedFile(null);
+      return;
+    }
     if (!["image/jpeg", "image/png", "application/pdf"].includes(next.type)) {
       event.target.value = "";
-      return setMessage("فقط JPG، PNG یا PDF انتخاب کن.");
+      replaceSelectedFile(null);
+      setMessage("فقط JPG، PNG یا PDF انتخاب کن.");
+      return;
     }
     if (next.size > 10 * 1024 * 1024) {
       event.target.value = "";
-      return setMessage("فایل اصلی باید کمتر از ۱۰ مگابایت باشد.");
+      replaceSelectedFile(null);
+      setMessage("فایل اصلی باید کمتر از ۱۰ مگابایت باشد.");
+      return;
     }
-    setFile(next);
+    replaceSelectedFile(next);
   }
 
   async function analyze() {

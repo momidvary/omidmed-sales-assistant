@@ -74,6 +74,10 @@ export function formatDate(value: string | null | undefined) {
   }).format(new Date(`${value}T12:00:00+03:30`));
 }
 
+export function currentTimestampMs() {
+  return Date.now();
+}
+
 export function currentJalaliMonthRange() {
   const parts = new Intl.DateTimeFormat("en-US-u-ca-persian", {
     year: "numeric",
