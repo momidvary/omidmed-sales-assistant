@@ -4,7 +4,7 @@
 
 ## رفتار امنیتی
 
-- اتصال پیش‌فرض به `localhost\TNC` و دیتابیس `Holoo1` با Windows Integrated Security است.
+- اتصال پیش‌فرض به `lpc:.\TNC` و دیتابیس `Holoo1` با Windows Integrated Security است. پیشوند `lpc:` پروتکل Shared Memory را اجبار می‌کند و فقط زمانی مناسب است که Agent و SQL Server هلو روی همان سیستم ویندوز اجرا شوند؛ برای اجرای Agent روی سیستم دیگر باید Data Source متناسب با شبکه و SPN معتبر تنظیم شود.
 - همهٔ queryها باید با `SELECT` شروع شوند. guard داخلی statement چندگانه، comment و هر command غیر SELECT را رد می‌کند.
 - connection string با `ApplicationIntent=ReadOnly` ساخته می‌شود.
 - بهتر است حساب ویندوز اجراکننده در SQL Server فقط مجوز `SELECT` داشته باشد. Agent هیچ کاربر یا مجوزی در هلو ایجاد یا تغییر نمی‌دهد.
@@ -48,7 +48,7 @@ Content-Type: application/json
   "runId": "holoo-HOST-...",
   "mode": "initial | incremental | weekly_full | manual_full",
   "batchType": "customers | invoices | finish",
-  "sourceServer": "localhost\\TNC",
+  "sourceServer": "lpc:.\\TNC",
   "sourceDatabase": "Holoo1",
   "final": false,
   "customers": [],
@@ -120,8 +120,8 @@ Invoice:
 
 - `initial`: خواندن کامل برای اولین همگام‌سازی. اگر Scheduled Task افزایشی بدون state موفق قبلی اجرا شود، به‌صورت خودکار به این حالت ارتقا می‌یابد.
 - `incremental`: خواندن از watermark قبلی با overlap پیش‌فرض ۱۵ دقیقه. overlap همراه upsert مقصد مانع از دست‌رفتن رکوردهای هم‌زمان می‌شود.
-- `weekly_full`: بازخوانی کامل هفتگی برای پوشش تغییرها یا حذف‌هایی که timestamp قابل اتکا ندارند.
-- `manual_full`: بازخوانی کامل با درخواست اپراتور.
+- `weekly_full`: بازخوانی کامل هفتگی برای پوشش رکوردهایی که timestamp قابل اتکا ندارند. اگر Sync افزایشی در حال اجرا باشد، پیش‌فرض تا ۱۸۰۰ ثانیه برای mutex منتظر می‌ماند.
+- `manual_full`: بازخوانی کامل با درخواست اپراتور و همان انتظار امن برای پایان اجرای جاری.
 - `dry_run`: اتصال، کشف metadata و خواندن/اعتبارسنجی کامل را انجام می‌دهد، اما API را صدا نمی‌زند و state را جلو نمی‌برد.
 
 مقصد مشتری را با کد هلو و در شرایط محدود با تلفن نرمال‌شده upsert می‌کند. فاکتور با `(Fac_Type, Fac_Code)` upsert می‌شود و اقلام همان فاکتور جایگزین می‌شوند؛ بنابراین تکرار یک run دادهٔ تکراری ایجاد نمی‌کند. Agent یک `runId` pending را تا موفقیت کامل نگه می‌دارد تا retry پس از قطع اجرا همان run را ادامه دهد.
@@ -163,7 +163,7 @@ Installer این کارها را انجام می‌دهد:
 
 Scheduled Taskها با `LogonType=InteractiveToken` و `RunLevel=Highest` اجرا می‌شوند (نام همین حالت در پارامتر PowerShell برابر `Interactive` است). بنابراین Sync خودکار فقط زمانی اجرا می‌شود که همان کاربر ویندوزی که Agent را نصب کرده است وارد سیستم باشد. این حالت باعث می‌شود DPAPI در scope همان کاربر قابل خواندن باشد و نشست کاربر به اینترنت برای ارسال امن به API دسترسی داشته باشد.
 
-Taskها با `StartWhenAvailable` و `MultipleInstances=IgnoreNew` ساخته می‌شوند و mutex سراسری Agent نیز از اجرای هم‌زمان دستی/زمان‌بندی‌شده جلوگیری می‌کند.
+Taskها با `StartWhenAvailable` و `MultipleInstances=IgnoreNew` ساخته می‌شوند و mutex سراسری Agent نیز از اجرای هم‌زمان دستی/زمان‌بندی‌شده جلوگیری می‌کند. اجرای افزایشی هنگام اشغال mutex سریع متوقف می‌شود و در نوبت دوساعته بعدی دوباره اجرا خواهد شد؛ حالت‌های `initial`، `weekly_full` و `manual_full` طبق `sync.fullSyncMutexWaitSeconds` (پیش‌فرض ۱۸۰۰ ثانیه، حداکثر ۳۶۰۰) منتظر می‌مانند تا Full Sync هفتگی بر اثر هم‌زمانی از دست نرود.
 
 ## اولین Sync واقعی
 
