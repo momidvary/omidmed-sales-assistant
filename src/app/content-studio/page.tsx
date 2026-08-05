@@ -17,7 +17,14 @@ import {
   type WhatsAppGeneratedContent,
 } from "@/lib/content-studio/generation";
 import { generateStructuredContent } from "@/lib/content-studio/openai";
+import {
+  decodeLegacyWhatsAppPayload,
+  encodeLegacyWhatsAppPayload,
+  isStoredWhatsAppPayload,
+  type StoredWhatsAppPayload,
+} from "@/lib/content-studio/whatsapp-legacy";
 import { createClient } from "@/lib/supabase/server";
+import { buildWhatsAppReadiness, probeWhatsAppSchema } from "@/lib/whatsapp/readiness";
 
 import CopyButton from "./copy-button";
 import styles from "./content-studio.module.css";
@@ -71,6 +78,7 @@ type MessageHistory = {
   delivered_at: string | null;
   read_at: string | null;
   failed_at: string | null;
+  provider_result_unknown_at: string | null;
 };
 
 const statusLabels: Record<ContentStatus, string> = {
@@ -187,45 +195,59 @@ async function generateContent(formData: FormData) {
     redirect(`/content-studio?channel=${channel}&error=schedule`);
   }
 
-  const insert =
-    channel === "whatsapp"
-      ? {
-          created_by: user.id,
-          topic,
-          product_name: productName || null,
-          objective,
-          audience: "physiotherapists",
-          channel,
-          format: contentType === "status" ? "story" : "post",
-          scheduled_for: scheduledDate?.toISOString() ?? null,
-          status: "draft",
-          title: generated.title,
-          caption: (generated as WhatsAppGeneratedContent).whatsapp_long_text,
-          on_image_text: (generated as WhatsAppGeneratedContent).whatsapp_short_text,
-          call_to_action: (generated as WhatsAppGeneratedContent).call_to_action,
-          hashtags: [],
-          image_prompt: (generated as WhatsAppGeneratedContent).image_prompt,
-          channel_payload: { content_type: contentType, ...generated },
-        }
-      : {
-          created_by: user.id,
-          topic,
-          product_name: productName || null,
-          objective,
-          audience: "physiotherapists",
-          channel,
-          format: requestedFormat,
-          scheduled_for: scheduledDate?.toISOString() ?? null,
-          status: "draft",
-          ...generated,
-        };
-
-  const { error } = await supabase.from("content_items").insert(insert as never);
-  if (error) {
-    redirect(
-      `/content-studio?channel=${channel}&error=${channel === "whatsapp" ? "whatsapp-schema" : "database"}`,
-    );
+  let insertError: unknown = null;
+  if (channel === "whatsapp") {
+    const whatsappGenerated = generated as WhatsAppGeneratedContent;
+    const payload: StoredWhatsAppPayload = {
+      content_type: contentType as StoredWhatsAppPayload["content_type"],
+      ...whatsappGenerated,
+    };
+    const baseInsert = {
+      created_by: user.id,
+      topic,
+      product_name: productName || null,
+      objective,
+      audience: "physiotherapists",
+      channel,
+      format: contentType === "status" ? "story" : "post",
+      scheduled_for: scheduledDate?.toISOString() ?? null,
+      status: "draft",
+      title: whatsappGenerated.title,
+      caption: whatsappGenerated.whatsapp_long_text,
+      on_image_text: whatsappGenerated.whatsapp_short_text,
+      call_to_action: whatsappGenerated.call_to_action,
+      image_prompt: whatsappGenerated.image_prompt,
+    };
+    const extendedResult = await supabase.from("content_items").insert({
+      ...baseInsert,
+      hashtags: [],
+      channel_payload: payload,
+    } as never);
+    insertError = extendedResult.error;
+    if (extendedResult.error) {
+      const compatibilityResult = await supabase.from("content_items").insert({
+        ...baseInsert,
+        hashtags: [encodeLegacyWhatsAppPayload(payload)],
+      } as never);
+      insertError = compatibilityResult.error;
+    }
+  } else {
+    const instagramResult = await supabase.from("content_items").insert({
+      created_by: user.id,
+      topic,
+      product_name: productName || null,
+      objective,
+      audience: "physiotherapists",
+      channel,
+      format: requestedFormat,
+      scheduled_for: scheduledDate?.toISOString() ?? null,
+      status: "draft",
+      ...generated,
+    } as never);
+    insertError = instagramResult.error;
   }
+
+  if (insertError) redirect(`/content-studio?channel=${channel}&error=database`);
   revalidatePath("/content-studio");
   redirect(`/content-studio?channel=${channel}&saved=content`);
 }
@@ -324,20 +346,6 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function isWhatsAppPayload(value: unknown): value is WhatsAppGeneratedContent & { content_type: string } {
-  if (!value || typeof value !== "object") return false;
-  const payload = value as Record<string, unknown>;
-  return [
-    "content_type",
-    "whatsapp_short_text",
-    "whatsapp_long_text",
-    "whatsapp_status_text",
-    "call_to_action",
-    "suggested_template_name",
-    "compliance_note",
-  ].every((key) => typeof payload[key] === "string") && Array.isArray(payload.template_variables);
-}
-
 export default async function ContentStudioPage({
   searchParams,
 }: {
@@ -402,21 +410,26 @@ export default async function ContentStudioPage({
   }
   const customers = customerData as CustomerOption[];
 
-  const messageResult = whatsappSchemaReady
-    ? await supabase
-        .from("whatsapp_messages")
-        .select("id,content_item_id,status,message_type,created_at,accepted_at,sent_at,delivered_at,read_at,failed_at")
-        .eq("owner_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(100)
-    : { data: [] };
-  const history = (messageResult.data ?? []) as MessageHistory[];
-  const apiConfigured = Boolean(
-    process.env.WHATSAPP_CLOUD_API_TOKEN &&
-      process.env.WHATSAPP_PHONE_NUMBER_ID &&
-      process.env.WHATSAPP_BUSINESS_ACCOUNT_ID &&
-      process.env.WHATSAPP_GRAPH_API_VERSION,
-  );
+  let history: MessageHistory[] = [];
+  if (whatsappSchemaReady) {
+    const messageResult = await supabase
+      .from("whatsapp_messages")
+      .select("id,content_item_id,status,message_type,created_at,accepted_at,sent_at,delivered_at,read_at,failed_at,provider_result_unknown_at")
+      .eq("owner_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (messageResult.error) whatsappSchemaReady = false;
+    else history = (messageResult.data ?? []) as MessageHistory[];
+  }
+  const readinessSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const readinessServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (whatsappSchemaReady && readinessSupabaseUrl && readinessServiceKey) {
+    const readinessAdmin = createAdminClient(readinessSupabaseUrl, readinessServiceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    whatsappSchemaReady = await probeWhatsAppSchema(readinessAdmin);
+  }
+  const whatsappReadiness = buildWhatsAppReadiness(whatsappSchemaReady);
 
   const counts = items.reduce<Record<ContentStatus, number>>(
     (acc, item) => ({ ...acc, [item.status]: acc[item.status] + 1 }),
@@ -428,7 +441,6 @@ export default async function ContentStudioPage({
     generation: "تولید محتوا انجام نشد؛ تنظیمات مدل یا ورودی را بررسی کن.",
     parse: "پاسخ مدل با ساختار مورد انتظار تطابق نداشت؛ دوباره تلاش کن.",
     database: "ذخیره محتوا در Supabase انجام نشد.",
-    "whatsapp-schema": "migration واتساپ هنوز اعمال نشده است؛ محتوای واتساپ ذخیره نشد.",
     schedule: "تاریخ زمان‌بندی معتبر نیست.",
     "image-prompt": "برای این محتوا پرامپت تصویر وجود ندارد.",
     "image-config": "تنظیمات تولید تصویر کامل نیست.",
@@ -452,7 +464,7 @@ export default async function ContentStudioPage({
       {params.error ? <div className={styles.error}>{errorLabels[params.error] || "عملیات انجام نشد."}</div> : null}
       {contentError ? <div className={styles.error}>خواندن فهرست محتوا انجام نشد.</div> : null}
       {!whatsappSchemaReady && activeChannel === "whatsapp" ? (
-        <div className={styles.error}>زیرساخت پایگاه داده واتساپ هنوز آماده نیست. ابتدا migration 023 باید پس از بازبینی جداگانه اعمال شود؛ ارسال غیرفعال است.</div>
+        <div className={styles.error}>زیرساخت پایگاه داده واتساپ هنوز آماده نیست. تولید، ویرایش، کپی متن و دانلود تصویر فعال‌اند؛ ثبت رضایت، تاریخچه و ارسال رسمی تا اعمال جداگانه migration 023 غیرفعال می‌مانند.</div>
       ) : null}
 
       <section className={styles.metrics}>
@@ -481,7 +493,7 @@ export default async function ContentStudioPage({
             )}
             <label>هدف<select name="objective" defaultValue="sales"><option value="sales">افزایش فروش</option><option value="education">آموزش</option><option value="trust">اعتمادسازی</option><option value="engagement">تعامل</option></select></label>
             <label>زمان انتشار پیشنهادی<input type="datetime-local" name="scheduled_for" /></label>
-            <button type="submit" disabled={activeChannel === "whatsapp" && !whatsappSchemaReady}>تولید و ذخیره پیش‌نویس</button>
+            <button type="submit">تولید و ذخیره پیش‌نویس</button>
           </form>
         </article>
 
@@ -490,7 +502,9 @@ export default async function ContentStudioPage({
           {items.length ? (
             <div className={styles.items}>
               {items.map((item) => {
-                const whatsappPayload = isWhatsAppPayload(item.channel_payload) ? item.channel_payload : null;
+                const whatsappPayload = isStoredWhatsAppPayload(item.channel_payload)
+                  ? item.channel_payload
+                  : decodeLegacyWhatsAppPayload(item.hashtags);
                 const instagramText = [item.caption, item.call_to_action, item.hashtags.join(" ")].filter(Boolean).join("\n\n");
                 return (
                   <article className={styles.card} key={item.id}>
@@ -505,7 +519,7 @@ export default async function ContentStudioPage({
                       {item.channel === "instagram" ? <div className={styles.copy}><strong>{item.on_image_text || "متن روی تصویر تعیین نشده"}</strong><p>{item.caption}</p>{item.call_to_action ? <b>{item.call_to_action}</b> : null}{item.hashtags.length ? <small>{item.hashtags.join(" ")}</small> : null}</div> : null}
                     </div>
                     {item.channel === "whatsapp" && whatsappPayload ? (
-                      <WhatsAppContentCard itemId={item.id} imageUrl={item.image_url} payload={whatsappPayload} customers={customers} history={history.filter((message) => message.content_item_id === item.id)} apiConfigured={apiConfigured} />
+                      <WhatsAppContentCard itemId={item.id} imageUrl={item.image_url} payload={whatsappPayload} customers={customers} history={history.filter((message) => message.content_item_id === item.id)} readiness={whatsappReadiness} />
                     ) : item.channel === "instagram" ? (
                       <div className={styles.actions}><CopyButton className={styles.copyButton} text={instagramText} label="کپی متن اینستاگرام" /><span className={styles.date}>{formatDate(item.scheduled_for)}</span></div>
                     ) : <div className={styles.error}>ساختار ذخیره‌شده این محتوا معتبر نیست.</div>}

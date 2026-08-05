@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 
 import { normalizeIranianMobile } from "@/lib/whatsapp/cloud-api";
+import type { WhatsAppReadiness } from "@/lib/whatsapp/readiness";
 
 import CopyButton from "./copy-button";
 import styles from "./content-studio.module.css";
@@ -27,6 +28,7 @@ type HistoryItem = {
   delivered_at: string | null;
   read_at: string | null;
   failed_at: string | null;
+  provider_result_unknown_at: string | null;
 };
 
 type Payload = {
@@ -48,6 +50,7 @@ const statusLabels: Record<string, string> = {
   delivered: "تحویل‌شده",
   read: "خوانده‌شده",
   failed: "ناموفق",
+  provider_result_unknown: "نتیجه سرویس نامشخص",
 };
 
 export default function WhatsAppContentCard({
@@ -56,14 +59,14 @@ export default function WhatsAppContentCard({
   payload,
   customers,
   history,
-  apiConfigured,
+  readiness,
 }: {
   itemId: string;
   imageUrl: string | null;
   payload: Payload;
   customers: CustomerOption[];
   history: HistoryItem[];
-  apiConfigured: boolean;
+  readiness: WhatsAppReadiness;
 }) {
   const [variant, setVariant] = useState<"short" | "long" | "status">(
     payload.content_type === "status" ? "status" : "short",
@@ -95,6 +98,14 @@ export default function WhatsAppContentCard({
     if (!normalized || consentStatus !== "opted_in" || statusOnly) return null;
     return `https://wa.me/${normalized}?text=${encodeURIComponent(selectedText)}`;
   }, [normalized, consentStatus, selectedText, statusOnly]);
+  const cloudSendAvailable = Boolean(
+    readiness.sendReady &&
+      customerId &&
+      normalized &&
+      consentStatus === "opted_in" &&
+      finalConfirmed &&
+      !statusOnly,
+  );
 
   async function downloadImage() {
     if (!imageUrl) return;
@@ -198,7 +209,9 @@ export default function WhatsAppContentCard({
       />
       <div className={styles.textTools}>
         <span>{selectedText.length.toLocaleString("fa-IR")} نویسه</span>
-        <CopyButton text={selectedText} label="کپی همین متن" className={styles.copyButton} />
+        <CopyButton text={texts.short} label="کپی متن کوتاه" className={styles.copyButton} />
+        <CopyButton text={texts.long} label="کپی متن کامل" className={styles.copyButton} />
+        <CopyButton text={texts.status} label="کپی استاتوس" className={styles.copyButton} />
         {imageUrl ? <button type="button" onClick={downloadImage}>دانلود تصویر</button> : null}
       </div>
       <p className={styles.compliance}>{payload.compliance_note}</p>
@@ -226,9 +239,15 @@ export default function WhatsAppContentCard({
               </select>
             </label>
             <div className={styles.apiStatus}>
-              <b>{apiConfigured ? "Cloud API تنظیم شده" : "Cloud API تنظیم نشده"}</b>
-              <span>وضعیت رضایت: {consentStatus === "opted_in" ? "ثبت شده" : consentStatus === "opted_out" ? "انصراف" : "نامشخص"}</span>
-              <span>شماره: {normalized ? "معتبر" : "نامعتبر یا ثبت‌نشده"}</span>
+              <b>آمادگی اتصال واتساپ</b>
+              <span>Schema و migration: {readiness.schemaReady ? "آماده" : "آماده نیست"}</span>
+              <span>Meta Cloud API: {readiness.cloudApiConfigured ? "کامل" : "ناقص"}</span>
+              <span>Graph API version: {readiness.graphApiVersionConfigured ? "معتبر" : "تنظیم نشده"}</span>
+              <span>Webhook: {readiness.webhookConfigured ? "کامل" : "ناقص"}</span>
+              <span>شماره مشتری: {normalized ? "معتبر" : "نامعتبر یا ثبت‌نشده"}</span>
+              <span>رضایت: {consentStatus === "opted_in" ? "ثبت شده" : consentStatus === "opted_out" ? "انصراف" : "نامشخص"}</span>
+              <span>لینک دستی wa.me: {manualUrl ? "آماده" : "غیرفعال"}</span>
+              <span>ارسال رسمی Cloud API: {cloudSendAvailable ? "آماده" : "غیرفعال"}</span>
             </div>
           </div>
 
@@ -240,8 +259,8 @@ export default function WhatsAppContentCard({
                 placeholder="منبع رضایت (مثلاً فرم حضوری یا تماس ثبت‌شده)"
                 maxLength={200}
               />
-              <button type="button" disabled={pending || !consentSource.trim()} onClick={() => saveConsent("opted_in")}>ثبت رضایت</button>
-              <button type="button" disabled={pending || !consentSource.trim()} onClick={() => saveConsent("opted_out")}>ثبت انصراف</button>
+              <button type="button" disabled={pending || !readiness.schemaReady || !consentSource.trim()} onClick={() => saveConsent("opted_in")}>ثبت رضایت</button>
+              <button type="button" disabled={pending || !readiness.schemaReady || !consentSource.trim()} onClick={() => saveConsent("opted_out")}>ثبت انصراف</button>
             </div>
           ) : null}
 
@@ -272,7 +291,7 @@ export default function WhatsAppContentCard({
             <label className={styles.checkRow}><input type="checkbox" checked={finalConfirmed} onChange={(event) => setFinalConfirmed(event.target.checked)} /> گیرنده و متن را بررسی کردم و ارسال واقعی را تأیید می‌کنم.</label>
             <button
               type="button"
-              disabled={pending || !apiConfigured || !customerId || consentStatus !== "opted_in" || !normalized || !finalConfirmed}
+              disabled={pending || !cloudSendAvailable}
               onClick={send}
             >
               {pending ? "در حال پردازش…" : "ارسال به یک مشتری با Cloud API"}
@@ -293,6 +312,7 @@ export default function WhatsAppContentCard({
                   message.sent_at ||
                   message.accepted_at ||
                   message.failed_at ||
+                  message.provider_result_unknown_at ||
                   message.created_at,
               ).toLocaleString("fa-IR")}
             </span>

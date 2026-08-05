@@ -2,6 +2,16 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export type WhatsAppStatus = "sent" | "delivered" | "read" | "failed";
 
+export type WhatsAppStoredStatus =
+  | "draft"
+  | "pending_confirmation"
+  | "accepted"
+  | "sent"
+  | "delivered"
+  | "read"
+  | "failed"
+  | "provider_result_unknown";
+
 export type WhatsAppStatusEvent = {
   eventKey: string;
   providerMessageId: string;
@@ -98,18 +108,44 @@ export function parseWebhookStatusEvents(value: unknown): WhatsAppStatusEvent[] 
   return result;
 }
 
-const statusRanks: Record<string, number> = {
-  draft: 0,
-  pending_confirmation: 1,
-  accepted: 2,
-  sent: 3,
-  delivered: 4,
-  read: 5,
-  failed: 6,
+const allowedWebhookTransitions: Readonly<Record<WhatsAppStoredStatus, readonly WhatsAppStatus[]>> = {
+  draft: ["sent", "delivered", "read", "failed"],
+  pending_confirmation: ["sent", "delivered", "read", "failed"],
+  accepted: ["sent", "delivered", "read", "failed"],
+  sent: ["delivered", "read", "failed"],
+  delivered: ["read"],
+  read: [],
+  failed: [],
+  provider_result_unknown: ["sent", "delivered", "read", "failed"],
 };
 
 export function shouldApplyStatus(current: string, next: WhatsAppStatus) {
-  if (next === "failed") return current !== "read";
-  if (current === "failed") return false;
-  return (statusRanks[next] ?? -1) > (statusRanks[current] ?? -1);
+  if (!(current in allowedWebhookTransitions)) return false;
+  return allowedWebhookTransitions[current as WhatsAppStoredStatus].includes(next);
+}
+
+export type WebhookReconcileOutcome =
+  | "applied"
+  | "reconciled"
+  | "duplicate"
+  | "ignored"
+  | "untracked";
+
+export async function reconcileWebhookBatch(
+  events: readonly WhatsAppStatusEvent[],
+  reconcile: (event: WhatsAppStatusEvent) => Promise<WebhookReconcileOutcome>,
+) {
+  const outcomes: WebhookReconcileOutcome[] = [];
+  try {
+    for (const event of events) {
+      outcomes.push(await reconcile(event));
+    }
+    return { ok: true as const, outcomes };
+  } catch {
+    return { ok: false as const, outcomes: [] };
+  }
+}
+
+export function webhookBatchHttpStatus(result: { ok: boolean }) {
+  return result.ok ? 200 : 503;
 }

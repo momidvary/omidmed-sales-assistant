@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 
 import {
   parseWebhookStatusEvents,
-  shouldApplyStatus,
+  reconcileWebhookBatch,
+  type WebhookReconcileOutcome,
+  webhookBatchHttpStatus,
   verifyWebhookSignature,
   verifyWebhookChallenge,
 } from "@/lib/whatsapp/webhook";
@@ -56,49 +58,30 @@ export async function POST(request: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  for (const event of events) {
-    const { data: message } = await admin
-      .from("whatsapp_messages")
-      .select("id,owner_id,status")
-      .eq("provider_message_id", event.providerMessageId)
-      .maybeSingle();
-    if (!message) continue;
-
-    const { error: eventError } = await admin.from("whatsapp_webhook_events").insert({
-      event_key: event.eventKey,
-      owner_id: message.owner_id,
-      whatsapp_message_id: message.id,
-      provider_message_id: event.providerMessageId,
-      provider_status: event.status,
-      provider_timestamp: event.providerTimestamp,
+  const reconciled = await reconcileWebhookBatch(events, async (event) => {
+    const { data, error } = await admin.rpc("process_whatsapp_webhook_status", {
+      p_event_key: event.eventKey,
+      p_provider_message_id: event.providerMessageId,
+      p_status: event.status,
+      p_provider_timestamp: event.providerTimestamp,
+      p_error_code: event.errorCode,
+      p_error_message: event.errorMessage,
     });
-    if (eventError) continue;
-    if (!shouldApplyStatus(message.status, event.status)) continue;
-
-    const timestamp = event.providerTimestamp ?? new Date().toISOString();
-    const update: Record<string, string | null> = {
-      status: event.status,
-      provider_status: event.status,
-    };
-    if (event.status === "sent") update.sent_at = timestamp;
-    if (event.status === "delivered") update.delivered_at = timestamp;
-    if (event.status === "read") update.read_at = timestamp;
-    if (event.status === "failed") {
-      update.failed_at = timestamp;
-      update.provider_error_code = event.errorCode;
-      update.provider_error_message = event.errorMessage;
+    if (error) throw new Error("Webhook transaction failed");
+    const row = Array.isArray(data) ? data[0] : data;
+    const outcome = row && typeof row === "object" && "outcome" in row
+      ? String(row.outcome)
+      : "";
+    if (!["applied", "reconciled", "duplicate", "ignored", "untracked"].includes(outcome)) {
+      throw new Error("Webhook transaction returned an invalid result");
     }
-    const allowedCurrentStatuses: Record<string, string[]> = {
-      sent: ["pending_confirmation", "accepted"],
-      delivered: ["pending_confirmation", "accepted", "sent"],
-      read: ["pending_confirmation", "accepted", "sent", "delivered"],
-      failed: ["draft", "pending_confirmation", "accepted", "sent", "delivered"],
-    };
-    await admin
-      .from("whatsapp_messages")
-      .update(update)
-      .eq("id", message.id)
-      .in("status", allowedCurrentStatuses[event.status]);
+    return outcome as WebhookReconcileOutcome;
+  });
+  if (!reconciled.ok) {
+    return NextResponse.json(
+      { received: false, retryable: true },
+      { status: webhookBatchHttpStatus(reconciled) },
+    );
   }
   return NextResponse.json({ received: true });
 }

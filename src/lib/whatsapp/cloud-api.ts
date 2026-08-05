@@ -23,6 +23,11 @@ export class WhatsAppCloudError extends Error {
   }
 }
 
+export function isAmbiguousWhatsAppProviderError(error: unknown) {
+  if (!(error instanceof WhatsAppCloudError)) return true;
+  return !error.httpStatus || error.httpStatus >= 500;
+}
+
 const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
 const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
 

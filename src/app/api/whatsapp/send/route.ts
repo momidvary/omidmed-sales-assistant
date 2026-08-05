@@ -6,6 +6,7 @@ import {
   buildImagePayload,
   buildTemplatePayload,
   buildTextPayload,
+  isAmbiguousWhatsAppProviderError,
   loadWhatsAppCloudConfig,
   sendWhatsAppMessage,
   WhatsAppCloudError,
@@ -203,6 +204,17 @@ export async function POST(request: Request) {
           409,
         );
       }
+      if (existing.status === "provider_result_unknown") {
+        return NextResponse.json({
+          ok: true,
+          duplicate: true,
+          messageId: existing.id,
+          status: existing.status,
+          providerMessageId: existing.provider_message_id,
+          notice:
+            "نتیجه درخواست قبلی از Meta نامشخص است؛ برای جلوگیری از پیام تکراری ارسال دوباره انجام نشد.",
+        });
+      }
       return NextResponse.json({
         ok: true,
         duplicate: true,
@@ -272,19 +284,21 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const providerError = error instanceof WhatsAppCloudError ? error : null;
-    const ambiguous = !providerError?.httpStatus;
+    const ambiguous = isAmbiguousWhatsAppProviderError(error);
+    const now = new Date().toISOString();
     await admin
       .from("whatsapp_messages")
       .update({
-        status: "failed",
-        provider_status: "failed",
+        status: ambiguous ? "provider_result_unknown" : "failed",
+        provider_status: ambiguous ? "provider_result_unknown" : "failed",
         provider_error_code:
           providerError?.providerCode ??
           (ambiguous ? "PROVIDER_RESULT_UNKNOWN" : "PROVIDER_ERROR"),
         provider_error_message: ambiguous
           ? "نتیجه درخواست به سرویس مشخص نشد."
           : providerError?.message ?? "ارسال ناموفق بود.",
-        failed_at: new Date().toISOString(),
+        failed_at: ambiguous ? null : now,
+        provider_result_unknown_at: ambiguous ? now : null,
       })
       .eq("id", pending.id)
       .eq("owner_id", user.id);
