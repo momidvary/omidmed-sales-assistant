@@ -1,0 +1,299 @@
+import { NextResponse } from "next/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+
+import { createClient } from "@/lib/supabase/server";
+import {
+  buildImagePayload,
+  buildTemplatePayload,
+  buildTextPayload,
+  loadWhatsAppCloudConfig,
+  sendWhatsAppMessage,
+  WhatsAppCloudError,
+  type WhatsAppMessageType,
+} from "@/lib/whatsapp/cloud-api";
+import { validateSendPolicy } from "@/lib/whatsapp/send-policy";
+import { WHATSAPP_CONTENT_TYPES } from "@/lib/content-studio/generation";
+
+export const runtime = "nodejs";
+export const maxDuration = 30;
+
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type SendBody = {
+  contentItemId?: unknown;
+  customerId?: unknown;
+  clientRequestId?: unknown;
+  confirmed?: unknown;
+  messageType?: unknown;
+  messageText?: unknown;
+  imageUrl?: unknown;
+  templateName?: unknown;
+  templateVariables?: unknown;
+  templateLanguage?: unknown;
+  templateApprovedConfirmed?: unknown;
+  conversationWindowConfirmed?: unknown;
+};
+
+function errorResponse(code: string, message: string, status: number) {
+  return NextResponse.json({ ok: false, code, message }, { status });
+}
+
+export async function POST(request: Request) {
+  const rawBody = await request.text();
+  if (new TextEncoder().encode(rawBody).byteLength > 32_000) {
+    return errorResponse("PAYLOAD_TOO_LARGE", "درخواست بیش از حد بزرگ است.", 413);
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return errorResponse("UNAUTHORIZED", "ورود به حساب لازم است.", 401);
+
+  let body: SendBody;
+  try {
+    body = JSON.parse(rawBody) as SendBody;
+  } catch {
+    return errorResponse("INVALID_JSON", "ساختار درخواست معتبر نیست.", 400);
+  }
+
+  const contentItemId = typeof body.contentItemId === "string" ? body.contentItemId : "";
+  const customerId = typeof body.customerId === "string" ? body.customerId : "";
+  const clientRequestId =
+    typeof body.clientRequestId === "string" ? body.clientRequestId : "";
+  const messageType = body.messageType as WhatsAppMessageType;
+  if (
+    !uuidPattern.test(contentItemId) ||
+    !uuidPattern.test(customerId) ||
+    !uuidPattern.test(clientRequestId) ||
+    !["text", "image", "template"].includes(messageType)
+  ) {
+    return errorResponse("INVALID_INPUT", "اطلاعات ارسال کامل یا معتبر نیست.", 400);
+  }
+
+  const [contentResult, customerResult] = await Promise.all([
+    supabase
+      .from("content_items")
+      .select("id,created_by,channel,channel_payload,image_url")
+      .eq("id", contentItemId)
+      .eq("created_by", user.id)
+      .maybeSingle(),
+    supabase
+      .from("customers")
+      .select("id,owner_id,phone,normalized_phone,whatsapp_consent_status")
+      .eq("id", customerId)
+      .eq("owner_id", user.id)
+      .maybeSingle(),
+  ]);
+
+  if (contentResult.error || customerResult.error) {
+    return errorResponse(
+      "WHATSAPP_SCHEMA_UNAVAILABLE",
+      "ساختار واتساپ هنوز روی پایگاه داده آماده نشده است.",
+      503,
+    );
+  }
+  const content = contentResult.data;
+  const customer = customerResult.data;
+  if (!content || content.channel !== "whatsapp") {
+    return errorResponse("CONTENT_NOT_FOUND", "محتوای واتساپ در دسترس نیست.", 404);
+  }
+  const channelPayload =
+    content.channel_payload && typeof content.channel_payload === "object"
+      ? (content.channel_payload as { content_type?: unknown })
+      : null;
+  if (
+    typeof channelPayload?.content_type !== "string" ||
+    !WHATSAPP_CONTENT_TYPES.includes(channelPayload.content_type as never)
+  ) {
+    return errorResponse("INVALID_CONTENT", "ساختار محتوای واتساپ معتبر نیست.", 400);
+  }
+  if (channelPayload?.content_type === "status") {
+    return errorResponse(
+      "STATUS_MANUAL_ONLY",
+      "استاتوس فقط برای کپی و دانلود آماده می‌شود و ارسال API ندارد.",
+      400,
+    );
+  }
+  if (!customer) {
+    return errorResponse("CUSTOMER_NOT_FOUND", "مشتری در دسترس نیست.", 404);
+  }
+
+  const templateName = typeof body.templateName === "string" ? body.templateName.trim() : "";
+  const templateVariables = Array.isArray(body.templateVariables)
+    ? body.templateVariables.filter((item): item is string => typeof item === "string")
+    : [];
+  const policy = validateSendPolicy({
+    confirmed: body.confirmed === true,
+    consentStatus: customer.whatsapp_consent_status,
+    mobile: customer.normalized_phone || customer.phone || "",
+    messageType,
+    conversationWindowConfirmed: body.conversationWindowConfirmed === true,
+    templateName,
+    templateVariables,
+    templateApprovedConfirmed: body.templateApprovedConfirmed === true,
+  });
+  if (!policy.ok) return errorResponse(policy.code, policy.message, 400);
+
+  const messageText = typeof body.messageText === "string" ? body.messageText.trim() : "";
+  const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl.trim() : "";
+  if (messageType === "image" && (!content.image_url || imageUrl !== content.image_url)) {
+    return errorResponse("INVALID_IMAGE", "تصویر باید متعلق به همین محتوای واتساپ باشد.", 400);
+  }
+  let providerPayload: Record<string, unknown>;
+  try {
+    if (messageType === "text") {
+      providerPayload = buildTextPayload(policy.normalizedMobile, messageText);
+    } else if (messageType === "image") {
+      providerPayload = buildImagePayload(policy.normalizedMobile, imageUrl, messageText);
+    } else {
+      providerPayload = buildTemplatePayload(
+        policy.normalizedMobile,
+        templateName,
+        templateVariables,
+        typeof body.templateLanguage === "string" ? body.templateLanguage : "fa",
+      );
+    }
+  } catch (error) {
+    const message = error instanceof WhatsAppCloudError ? error.message : "پیام معتبر نیست.";
+    return errorResponse("INVALID_MESSAGE", message, 400);
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !serviceKey) {
+    return errorResponse("SERVER_CONFIG_MISSING", "تنظیمات امن سرور کامل نیست.", 503);
+  }
+  const admin = createAdminClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const { data: pending, error: insertError } = await admin
+    .from("whatsapp_messages")
+    .insert({
+      owner_id: user.id,
+      customer_id: customerId,
+      content_item_id: contentItemId,
+      client_request_id: clientRequestId,
+      recipient: policy.normalizedMobile,
+      message_type: messageType,
+      template_name: messageType === "template" ? templateName : null,
+      template_variables: messageType === "template" ? templateVariables : [],
+      message_text: messageType === "template" ? null : messageText,
+      image_url: messageType === "image" ? imageUrl : null,
+      conversation_window_confirmed: body.conversationWindowConfirmed === true,
+      status: "pending_confirmation",
+    })
+    .select("id,status,provider_message_id")
+    .single();
+
+  if (insertError) {
+    const { data: existing } = await admin
+      .from("whatsapp_messages")
+      .select("id,status,provider_message_id")
+      .eq("owner_id", user.id)
+      .eq("client_request_id", clientRequestId)
+      .maybeSingle();
+    if (existing) {
+      if (existing.status === "failed") {
+        return errorResponse(
+          "DUPLICATE_FAILED_REQUEST",
+          "این درخواست قبلاً ناموفق ثبت شده و برای جلوگیری از ارسال تکراری دوباره اجرا نشد.",
+          409,
+        );
+      }
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        messageId: existing.id,
+        status: existing.status,
+        providerMessageId: existing.provider_message_id,
+        notice:
+          existing.status === "accepted"
+            ? "این درخواست قبلاً توسط Meta پذیرفته شده است؛ ارسال تکرار نشد."
+            : "این درخواست قبلاً ثبت شده و در حال پردازش است؛ ارسال تکرار نشد.",
+      });
+    }
+    return errorResponse("DATABASE_ERROR", "ثبت امن درخواست ارسال ممکن نشد.", 503);
+  }
+
+  const config = loadWhatsAppCloudConfig();
+  if (!config) {
+    await admin
+      .from("whatsapp_messages")
+      .update({ status: "failed", provider_error_code: "CONFIG_MISSING", failed_at: new Date().toISOString() })
+      .eq("id", pending.id)
+      .eq("owner_id", user.id);
+    return errorResponse("API_NOT_CONFIGURED", "اتصال رسمی WhatsApp Cloud API تنظیم نشده است.", 503);
+  }
+
+  try {
+    const provider = await sendWhatsAppMessage({ config, payload: providerPayload });
+    const now = new Date().toISOString();
+    const acceptedUpdate = {
+      status: "accepted",
+      provider_status: "accepted",
+      provider_message_id: provider.messageId,
+      accepted_at: now,
+      provider_error_code: null,
+      provider_error_message: null,
+    };
+    let persistenceError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await admin
+        .from("whatsapp_messages")
+        .update(acceptedUpdate)
+        .eq("id", pending.id)
+        .eq("owner_id", user.id);
+      persistenceError = result.error;
+      if (!persistenceError) break;
+    }
+    if (persistenceError) {
+      return NextResponse.json(
+        {
+          ok: true,
+          messageId: pending.id,
+          providerMessageId: provider.messageId,
+          status: "accepted",
+          trackingWarning: true,
+          notice:
+            "Meta پیام را پذیرفت، اما ثبت وضعیت کامل نشد؛ برای جلوگیری از ارسال تکراری دوباره ارسال نکنید.",
+        },
+        { status: 202 },
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      messageId: pending.id,
+      providerMessageId: provider.messageId,
+      status: "accepted",
+      notice: "پیام توسط Meta پذیرفته شد؛ تحویل هنوز تأیید نشده است.",
+    });
+  } catch (error) {
+    const providerError = error instanceof WhatsAppCloudError ? error : null;
+    const ambiguous = !providerError?.httpStatus;
+    await admin
+      .from("whatsapp_messages")
+      .update({
+        status: "failed",
+        provider_status: "failed",
+        provider_error_code:
+          providerError?.providerCode ??
+          (ambiguous ? "PROVIDER_RESULT_UNKNOWN" : "PROVIDER_ERROR"),
+        provider_error_message: ambiguous
+          ? "نتیجه درخواست به سرویس مشخص نشد."
+          : providerError?.message ?? "ارسال ناموفق بود.",
+        failed_at: new Date().toISOString(),
+      })
+      .eq("id", pending.id)
+      .eq("owner_id", user.id);
+    return ambiguous
+      ? errorResponse(
+          "PROVIDER_RESULT_UNKNOWN",
+          "نتیجه ارتباط با Meta مشخص نیست؛ برای جلوگیری از پیام تکراری درخواست خودکار تکرار نشد.",
+          504,
+        )
+      : errorResponse("PROVIDER_REJECTED", "سرویس واتساپ پیام را نپذیرفت.", 502);
+  }
+}

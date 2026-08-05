@@ -73,6 +73,19 @@ type SmsRow = {
   created_at: string;
 };
 
+type WhatsAppRow = {
+  id: string;
+  message_text: string | null;
+  message_type: string;
+  status: string;
+  accepted_at: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+  failed_at: string | null;
+  created_at: string;
+};
+
 type OpportunityRow = {
   id: string;
   status: string;
@@ -90,7 +103,7 @@ type OpportunityRow = {
 
 type ActivityItem = {
   id: string;
-  type: "followup" | "sms" | "opportunity";
+  type: "followup" | "sms" | "whatsapp" | "opportunity";
   date: string;
   title: string;
   detail: string | null;
@@ -489,6 +502,7 @@ export default async function CustomerPage({
     invoicesResult,
     productSummaryResult,
     smsResult,
+    whatsappResult,
     opportunitiesResult,
   ] = await Promise.all([
     supabase
@@ -546,6 +560,14 @@ export default async function CustomerPage({
       .order("created_at", { ascending: false })
       .limit(30),
     supabase
+      .from("whatsapp_messages")
+      .select(
+        "id,message_text,message_type,status,accepted_at,sent_at,delivered_at,read_at,failed_at,created_at",
+      )
+      .eq("customer_id", id)
+      .order("created_at", { ascending: false })
+      .limit(30),
+    supabase
       .from("sales_opportunities")
       .select(
         "id,status,stage,source,product_interest,quoted_at,last_contact_at,next_followup_at,estimated_value,final_value,notes,created_at",
@@ -563,6 +585,7 @@ export default async function CustomerPage({
 
   const followups = (followupsResult.data ?? []) as FollowupRow[];
   const smsMessages = (smsResult.data ?? []) as SmsRow[];
+  const whatsappMessages = (whatsappResult.data ?? []) as WhatsAppRow[];
   const opportunities = (
     opportunitiesResult.data ?? []
   ) as OpportunityRow[];
@@ -652,6 +675,32 @@ export default async function CustomerPage({
           ? "پذیرفته‌شده توسط سرویس پیامک"
           : item.delivery_status),
       success: item.request_success,
+    })),
+    ...whatsappMessages.map((item) => ({
+      id: `whatsapp-${item.id}`,
+      type: "whatsapp" as const,
+      date:
+        item.read_at ||
+        item.delivered_at ||
+        item.sent_at ||
+        item.accepted_at ||
+        item.failed_at ||
+        item.created_at,
+      title:
+        item.status === "accepted"
+          ? "پیام توسط Meta پذیرفته شد"
+          : item.status === "sent"
+            ? "پیام واتساپ ارسال شد"
+            : item.status === "delivered"
+              ? "پیام واتساپ تحویل شد"
+              : item.status === "read"
+                ? "پیام واتساپ خوانده شد"
+                : item.status === "failed"
+                  ? "ارسال واتساپ ناموفق بود"
+                  : "درخواست واتساپ",
+      detail: item.message_text,
+      meta: `${item.message_type} · ${item.status}`,
+      success: item.status !== "failed",
     })),
     ...opportunities.map((item) => ({
       id: `opportunity-${item.id}`,
@@ -1185,7 +1234,9 @@ export default async function CustomerPage({
                         ? "پیگیری"
                         : item.type === "sms"
                           ? "پیامک"
-                          : "فرصت فروش"}
+                          : item.type === "whatsapp"
+                            ? "واتساپ"
+                            : "فرصت فروش"}
                     </span>
 
                     {item.detail ? <p>{item.detail}</p> : null}

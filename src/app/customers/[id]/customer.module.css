@@ -681,6 +681,11 @@
   background: #4c78a8;
 }
 
+.timelineDot.whatsapp {
+  border-color: #cceee2;
+  background: #168c68;
+}
+
 .timelineDot.opportunity {
   border-color: #f4e5bd;
   background: #b4852e;
