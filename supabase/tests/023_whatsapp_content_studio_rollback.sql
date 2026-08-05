@@ -3,6 +3,8 @@
 
 begin;
 
+select plan(1);
+
 do $test$
 declare
   v_owner_id uuid := '23000000-0000-4000-8000-000000000001';
@@ -200,5 +202,8 @@ end
 $atomicity$;
 
 drop trigger whatsapp_023_reject_update on public.whatsapp_messages;
+
+select pass('WhatsApp migration 023 atomicity, idempotency, RLS, and owner isolation');
+select * from finish();
 
 rollback;
