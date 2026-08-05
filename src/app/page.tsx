@@ -131,16 +131,6 @@ function formatDate(value: string | null) {
   }).format(new Date(`${value}T12:00:00+03:30`));
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) return "تعیین نشده";
-
-  return new Intl.DateTimeFormat("fa-IR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Tehran",
-  }).format(new Date(value));
-}
-
 function normalizePhoneForLink(phone: string | null) {
   if (!phone) return null;
 

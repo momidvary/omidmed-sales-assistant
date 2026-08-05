@@ -107,18 +107,22 @@ export async function POST() {
     );
   }
 
-  const delivered = statuses.filter(
+  const rowStatuses = rows
+    .map((row) => statusMap.get(row.provider_rec_id))
+    .filter((status) => status !== undefined);
+  const delivered = rowStatuses.filter(
     (status) => status.deliveryStatus === "delivered",
   ).length;
-  const undelivered = statuses.filter(
+  const undelivered = rowStatuses.filter(
     (status) => status.deliveryStatus === "undelivered",
   ).length;
 
   return NextResponse.json({
     success: true,
-    checked: statuses.length,
+    checked: rows.length,
+    resolved: rowStatuses.length,
     delivered,
     undelivered,
-    pending: statuses.length - delivered - undelivered,
+    pending: rows.length - delivered - undelivered,
   });
 }

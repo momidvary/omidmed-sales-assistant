@@ -2,7 +2,11 @@ import Link from "next/link";
 import AppShell from "@/components/app-shell";
 import AccountingNav from "@/components/accounting-nav";
 import { createClient } from "@/lib/supabase/server";
-import { currentJalaliMonthRange, formatMoney } from "@/lib/accounting/format";
+import {
+  currentJalaliMonthRange,
+  currentTimestampMs,
+  formatMoney,
+} from "@/lib/accounting/format";
 import styles from "./accounting.module.css";
 
 function numeric(value: number | string | null | undefined) {
@@ -30,7 +34,7 @@ export default async function AccountingPage() {
   const materials = materialsResult.data ?? [];
   const products = productsResult.data ?? [];
   const staleDays = Number(settingsResult.data?.stale_price_days ?? 30);
-  const now = Date.now();
+  const now = currentTimestampMs();
   const staleMaterials = materials.filter((item) => {
     const date = item.replacement_price_at || item.latest_purchase_date;
     if (!date || !numeric(item.replacement_unit_cost)) return true;

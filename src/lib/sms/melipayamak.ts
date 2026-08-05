@@ -85,6 +85,34 @@ function providerBoolean(value: unknown) {
   );
 }
 
+export function parseMeliPayamakProviderJson(raw: string): ProviderJson {
+  // MeliPayamak returns receipt ids as JSON integers. Current ids have 19
+  // digits, so parsing them as JavaScript numbers silently rounds them and
+  // makes later delivery lookups fail. Quote only recId fields before parse.
+  const losslessRaw = raw
+    .replace(
+      /("recIds"\s*:\s*\[)([\s\S]*?)(\])/g,
+      (_match, prefix: string, values: string, suffix: string) =>
+        `${prefix}${values.replace(
+          /(?<!["\d])-?\d{16,}(?!["\d])/g,
+          (value) => `"${value}"`,
+        )}${suffix}`,
+    )
+    .replace(
+      /("recId"\s*:\s*)(-?\d{16,})(?=\s*[,}])/g,
+      '$1"$2"',
+    );
+
+  return JSON.parse(losslessRaw) as ProviderJson;
+}
+
+function providerRecId(value: unknown) {
+  if (value == null) return null;
+
+  const recId = String(value).trim();
+  return /^[1-9]\d*$/.test(recId) ? recId : null;
+}
+
 function providerStatus(json: ProviderJson, fallback = "") {
   const status = json.status;
 
@@ -97,6 +125,48 @@ function providerStatus(json: ProviderJson, fallback = "") {
   }
 
   return String(status);
+}
+
+function isSuccessfulProviderStatus(status: string) {
+  const normalized = status.replace(/\s+/g, "").toLowerCase();
+  return /^(عملیاتموفق|موفق|success|successful|ok)$/.test(normalized);
+}
+
+export function parseMeliPayamakSendResults(
+  input: { to: string[]; text: string[] },
+  response: ProviderJson,
+) {
+  const rawRecIds = Array.isArray(response.recIds)
+    ? response.recIds
+    : input.to.length === 1 && response.recId != null
+      ? [response.recId]
+      : [];
+  const successes = Array.isArray(response.success)
+    ? response.success
+    : response.success == null
+      ? []
+      : [response.success];
+  const status = providerStatus(response);
+
+  return input.to.map((to, index) => {
+    const recId = providerRecId(rawRecIds[index]);
+    const success =
+      successes.length > index
+        ? providerBoolean(successes[index])
+        : recId !== null;
+    const rejectionStatus =
+      status && !isSuccessfulProviderStatus(status)
+        ? status
+        : "ارسال این گیرنده توسط ملی پیامک رد شد؛ شماره ممکن است در بلک‌لیست پیامک تبلیغاتی باشد یا خط فرستنده برای آن مجاز نباشد.";
+
+    return {
+      to,
+      text: input.text[index],
+      success,
+      recId,
+      status: success ? status : rejectionStatus,
+    };
+  });
 }
 
 async function postToProvider(
@@ -133,7 +203,7 @@ async function postToProvider(
     let json: ProviderJson = {};
 
     try {
-      json = raw ? (JSON.parse(raw) as ProviderJson) : {};
+      json = raw ? parseMeliPayamakProviderJson(raw) : {};
     } catch {
       json = { status: raw || `HTTP ${response.status}` };
     }
@@ -183,42 +253,13 @@ export async function sendMultipleSms(input: {
     udh: "",
   });
 
-  const recIds = Array.isArray(response.recIds)
-    ? response.recIds
-    : [];
-
-  const successes = Array.isArray(response.success)
-    ? response.success
-    : [];
-
-  const status = providerStatus(response);
-
-  return input.to.map((to, index) => {
-    const recId =
-      recIds[index] == null ? null : String(recIds[index]);
-
-    const success =
-      providerBoolean(successes[index]) ||
-      (successes.length === 0 && Boolean(recId));
-
-    return {
-      to,
-      text: input.text[index],
-      success,
-      recId,
-      status:
-        status ||
-        (success
-          ? ""
-          : "سرویس ملی پیامک، ارسال این گیرنده را نپذیرفت."),
-    };
-  });
+  return parseMeliPayamakSendResults(input, response);
 }
 
 /**
  * ارسال‌های تکی برنامه نیز عمداً از متد multiple استفاده می‌کنند؛
  * چون پلن فعال این پروژه متد «چند گیرنده با متن متفاوت» است و
- * پاسخ استاندارد آن شامل recIds و success است.
+ * پاسخ پذیرفته‌شده آن با recIds قابل رهگیری است.
  */
 export async function sendSimpleSms(input: {
   sender: string;

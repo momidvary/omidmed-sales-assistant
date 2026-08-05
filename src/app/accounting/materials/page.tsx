@@ -10,6 +10,7 @@ import {
 } from "@/lib/accounting/constants";
 import {
   cleanText,
+  currentTimestampMs,
   formatDate,
   formatDecimal,
   formatMoney,
@@ -90,7 +91,7 @@ export default async function MaterialsPage({ searchParams }: { searchParams: Pr
   ]);
   const rows = (data ?? []) as MaterialRow[];
   const staleDays = Number(settings?.stale_price_days ?? 30);
-  const now = Date.now();
+  const now = currentTimestampMs();
   const staleCount = rows.filter((row) => {
     const date = row.replacement_price_at || row.latest_purchase_date;
     if (!date || !Number(row.replacement_unit_cost ?? 0)) return true;
