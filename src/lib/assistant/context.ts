@@ -13,8 +13,12 @@ type InvoiceRow = {
   invoice_date: string;
   total_amount: number | string | null;
   discount_amount: number | string | null;
-  account_balance_amount: number | string | null;
-  account_balance_status: string | null;
+};
+
+type AssistantCustomer = CustomerForFollowup & {
+  holo_balance_amount: number | string | null;
+  holo_balance_status: string | null;
+  holo_last_synced_at: string | null;
 };
 
 type ProductRow = {
@@ -168,7 +172,7 @@ export async function buildAssistantContext({
       supabase
         .from("customer_crm_summary")
         .select(
-          "id,name,status,priority,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase",
+          "id,name,status,priority,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at",
         )
         .order("total_sales", { ascending: false })
         .limit(1500),
@@ -180,7 +184,7 @@ export async function buildAssistantContext({
       supabase
         .from("invoices")
         .select(
-          "customer_id,invoice_number,invoice_date,total_amount,discount_amount,account_balance_amount,account_balance_status",
+          "customer_id,invoice_number,invoice_date,total_amount,discount_amount",
         )
         .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
         .order("invoice_date", { ascending: false })
@@ -205,7 +209,7 @@ export async function buildAssistantContext({
     throw new Error(errors.map((error) => error?.message).join(" | "));
   }
 
-  const customers = (customerResult.data ?? []) as CustomerForFollowup[];
+  const customers = (customerResult.data ?? []) as AssistantCustomer[];
   const followups = (followupResult.data ?? []) as FollowupForScoring[];
   const invoices = (invoiceResult.data ?? []) as InvoiceRow[];
   const products = (productResult.data ?? []) as ProductRow[];
@@ -246,7 +250,7 @@ export async function buildAssistantContext({
   const selectedCustomerIds = Array.from(focusCustomerIds).slice(0, 80);
   const selectedCustomers = selectedCustomerIds
     .map((id) => customerById.get(id))
-    .filter((customer): customer is CustomerForFollowup => Boolean(customer));
+    .filter((customer): customer is AssistantCustomer => Boolean(customer));
 
   const monthlySales = new Map<string, { amount: number; count: number }>();
   for (const invoice of invoices) {
@@ -291,8 +295,6 @@ export async function buildAssistantContext({
         date_jalali: formatDate(invoice.invoice_date),
         amount_toman: numeric(invoice.total_amount),
         discount_toman: numeric(invoice.discount_amount),
-        balance_toman: numeric(invoice.account_balance_amount),
-        balance_status: invoice.account_balance_status,
       }));
     const customerProducts = products
       .filter((product) => product.customer_id === customer.id)
@@ -317,6 +319,9 @@ export async function buildAssistantContext({
       average_purchase_gap_days: numeric(customer.avg_purchase_gap_days),
       purchase_count: numeric(customer.purchase_count),
       total_sales_toman: numeric(customer.total_sales),
+      holoo_balance_toman: numeric(customer.holo_balance_amount),
+      holoo_balance_status: customer.holo_balance_status ?? "unknown",
+      holoo_balance_last_synced_at: customer.holo_last_synced_at,
       next_followup_at: customer.next_followup_at,
       latest_followup: latest
         ? {

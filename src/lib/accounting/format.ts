@@ -75,11 +75,12 @@ export function formatDate(value: string | null | undefined) {
 }
 
 export function currentJalaliMonthRange() {
+  const generatedAt = new Date();
   const parts = new Intl.DateTimeFormat("en-US-u-ca-persian", {
     year: "numeric",
     month: "numeric",
     timeZone: "Asia/Tehran",
-  }).formatToParts(new Date());
+  }).formatToParts(generatedAt);
   const year = Number(parts.find((part) => part.type === "year")?.value ?? 0);
   const month = Number(parts.find((part) => part.type === "month")?.value ?? 0);
   const start = jalaliToGregorian(year, month, 1);
@@ -89,5 +90,5 @@ export function currentJalaliMonthRange() {
   const pad = (value: number) => String(value).padStart(2, "0");
   const iso = (date: { gy: number; gm: number; gd: number } | null) =>
     date ? `${date.gy}-${pad(date.gm)}-${pad(date.gd)}` : "";
-  return { year, month, from: iso(start), toExclusive: iso(next) };
+  return { year, month, from: iso(start), toExclusive: iso(next), generatedAtMs: generatedAt.getTime() };
 }

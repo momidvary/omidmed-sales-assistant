@@ -76,7 +76,7 @@ export async function POST(request: Request) {
   const [contentResult, customerResult] = await Promise.all([
     supabase
       .from("content_items")
-      .select("id,created_by,channel,channel_payload,image_url")
+      .select("id,created_by,channel,channel_payload,image_path,image_url")
       .eq("id", contentItemId)
       .eq("created_by", user.id)
       .maybeSingle(),
@@ -121,10 +121,45 @@ export async function POST(request: Request) {
     return errorResponse("CUSTOMER_NOT_FOUND", "مشتری در دسترس نیست.", 404);
   }
 
+  const config = loadWhatsAppCloudConfig();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!config || !supabaseUrl || !serviceKey) {
+    return errorResponse("SERVER_CONFIG_MISSING", "تنظیمات امن سرور و Meta کامل نیست.", 503);
+  }
+  const admin = createAdminClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
   const templateName = typeof body.templateName === "string" ? body.templateName.trim() : "";
+  const templateLanguage =
+    typeof body.templateLanguage === "string" ? body.templateLanguage.trim() : "fa";
   const templateVariables = Array.isArray(body.templateVariables)
     ? body.templateVariables.filter((item): item is string => typeof item === "string")
     : [];
+  let approvedTemplate = false;
+  if (messageType === "template") {
+    const { data: template, error: templateError } = await admin
+      .from("whatsapp_templates")
+      .select("id,variable_count")
+      .eq("owner_id", user.id)
+      .eq("business_account_id", config.businessAccountId)
+      .eq("name", templateName)
+      .eq("language", templateLanguage)
+      .eq("status", "APPROVED")
+      .maybeSingle();
+    if (templateError) {
+      return errorResponse("TEMPLATE_SCHEMA_UNAVAILABLE", "فهرست Templateهای Meta آماده نیست.", 503);
+    }
+    if (!template || Number(template.variable_count) !== templateVariables.length) {
+      return errorResponse(
+        "TEMPLATE_NOT_APPROVED",
+        "Template تأییدشده یا تعداد متغیرهای آن با فهرست همگام‌شده Meta تطابق ندارد.",
+        400,
+      );
+    }
+    approvedTemplate = true;
+  }
   const policy = validateSendPolicy({
     confirmed: body.confirmed === true,
     consentStatus: customer.whatsapp_consent_status,
@@ -133,14 +168,28 @@ export async function POST(request: Request) {
     conversationWindowConfirmed: body.conversationWindowConfirmed === true,
     templateName,
     templateVariables,
-    templateApprovedConfirmed: body.templateApprovedConfirmed === true,
+    templateApprovedConfirmed: approvedTemplate,
   });
   if (!policy.ok) return errorResponse(policy.code, policy.message, 400);
 
   const messageText = typeof body.messageText === "string" ? body.messageText.trim() : "";
-  const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl.trim() : "";
-  if (messageType === "image" && (!content.image_url || imageUrl !== content.image_url)) {
-    return errorResponse("INVALID_IMAGE", "تصویر باید متعلق به همین محتوای واتساپ باشد.", 400);
+  let imageUrl = "";
+  if (messageType === "image") {
+    if (content.image_path) {
+      const { data, error } = await admin.storage
+        .from("content-studio")
+        .createSignedUrl(content.image_path, 600);
+      if (error || !data?.signedUrl) {
+        return errorResponse("INVALID_IMAGE", "دسترسی امن به تصویر محتوا ممکن نشد.", 400);
+      }
+      imageUrl = data.signedUrl;
+    } else {
+      const requestedImageUrl = typeof body.imageUrl === "string" ? body.imageUrl.trim() : "";
+      if (!content.image_url || requestedImageUrl !== content.image_url) {
+        return errorResponse("INVALID_IMAGE", "تصویر باید متعلق به همین محتوای واتساپ باشد.", 400);
+      }
+      imageUrl = content.image_url;
+    }
   }
   let providerPayload: Record<string, unknown>;
   try {
@@ -153,22 +202,13 @@ export async function POST(request: Request) {
         policy.normalizedMobile,
         templateName,
         templateVariables,
-        typeof body.templateLanguage === "string" ? body.templateLanguage : "fa",
+        templateLanguage,
       );
     }
   } catch (error) {
     const message = error instanceof WhatsAppCloudError ? error.message : "پیام معتبر نیست.";
     return errorResponse("INVALID_MESSAGE", message, 400);
   }
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!supabaseUrl || !serviceKey) {
-    return errorResponse("SERVER_CONFIG_MISSING", "تنظیمات امن سرور کامل نیست.", 503);
-  }
-  const admin = createAdminClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
 
   const { data: pending, error: insertError } = await admin
     .from("whatsapp_messages")
@@ -180,6 +220,7 @@ export async function POST(request: Request) {
       recipient: policy.normalizedMobile,
       message_type: messageType,
       template_name: messageType === "template" ? templateName : null,
+      template_language: messageType === "template" ? templateLanguage : null,
       template_variables: messageType === "template" ? templateVariables : [],
       message_text: messageType === "template" ? null : messageText,
       image_url: messageType === "image" ? imageUrl : null,
@@ -228,16 +269,6 @@ export async function POST(request: Request) {
       });
     }
     return errorResponse("DATABASE_ERROR", "ثبت امن درخواست ارسال ممکن نشد.", 503);
-  }
-
-  const config = loadWhatsAppCloudConfig();
-  if (!config) {
-    await admin
-      .from("whatsapp_messages")
-      .update({ status: "failed", provider_error_code: "CONFIG_MISSING", failed_at: new Date().toISOString() })
-      .eq("id", pending.id)
-      .eq("owner_id", user.id);
-    return errorResponse("API_NOT_CONFIGURED", "اتصال رسمی WhatsApp Cloud API تنظیم نشده است.", 503);
   }
 
   try {

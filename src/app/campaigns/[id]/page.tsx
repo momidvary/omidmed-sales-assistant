@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import AppShell, { Icon } from "@/components/app-shell";
 import { createClient } from "@/lib/supabase/server";
 import {
-  addTehranDaysAtTen,
   campaignChannelLabels,
   campaignStatusLabels,
   campaignTypeLabels,
@@ -115,158 +114,30 @@ async function saveCampaignResult(formData: FormData) {
   const notes = clean(formData.get("notes"), 1500);
   const lostReason = clean(formData.get("lost_reason"), 40);
   const orderValue = Math.max(0, Number(formData.get("order_value") ?? 0) || 0);
+  const requestId = clean(formData.get("request_id"), 80);
 
-  if (!campaignId || !memberId || !customerId || !allowedActions.has(outcome)) {
+  if (
+    !campaignId ||
+    !memberId ||
+    !customerId ||
+    !allowedActions.has(outcome) ||
+    !/^[0-9a-f-]{36}$/i.test(requestId)
+  ) {
     redirect(`/campaigns/${campaignId}?error=invalid`);
   }
 
   const supabase = await createClient();
-  const now = new Date().toISOString();
-  const nextFollowupAt =
-    outcome === "no_answer" || outcome === "requested_price"
-      ? addTehranDaysAtTen(1)
-      : outcome === "contacted" || outcome === "follow_up"
-        ? addTehranDaysAtTen(3)
-        : outcome === "no_need"
-          ? addTehranDaysAtTen(30)
-          : null;
-
-  const [{ data: campaign }, { data: currentOpportunity }] = await Promise.all([
-    supabase
-      .from("campaigns")
-      .select("id,target_product")
-      .eq("id", campaignId)
-      .single(),
-    supabase
-      .from("sales_opportunities")
-      .select("id,estimated_value,status")
-      .eq("customer_id", customerId)
-      .in("status", ["open", "on_hold"])
-      .maybeSingle(),
-  ]);
-
-  let opportunityId = currentOpportunity?.id as string | undefined;
-
-  if (outcome === "requested_price") {
-    const opportunityPayload = {
-      customer_id: customerId,
-      campaign_id: campaignId,
-      campaign_member_id: memberId,
-      status: "open",
-      stage: "quote_sent",
-      source: "campaign",
-      product_interest: campaign?.target_product || null,
-      quoted_at: now,
-      last_contact_at: now,
-      next_followup_at: nextFollowupAt,
-      estimated_value: orderValue || currentOpportunity?.estimated_value || null,
-      lost_reason: null,
-      notes: notes || null,
-    };
-
-    if (opportunityId) {
-      const { error } = await supabase
-        .from("sales_opportunities")
-        .update(opportunityPayload)
-        .eq("id", opportunityId);
-      if (error) redirect(`/campaigns/${campaignId}?error=opportunity`);
-    } else {
-      const { data, error } = await supabase
-        .from("sales_opportunities")
-        .insert(opportunityPayload)
-        .select("id")
-        .single();
-      if (error || !data) redirect(`/campaigns/${campaignId}?error=opportunity`);
-      opportunityId = data.id;
-    }
-  } else if (outcome === "ordered" && opportunityId) {
-    await supabase
-      .from("sales_opportunities")
-      .update({
-        status: "won",
-        last_contact_at: now,
-        next_followup_at: null,
-        final_value: orderValue || null,
-        lost_reason: null,
-      })
-      .eq("id", opportunityId);
-  } else if (outcome === "lost" && opportunityId) {
-    await supabase
-      .from("sales_opportunities")
-      .update({
-        status: "lost",
-        last_contact_at: now,
-        next_followup_at: null,
-        lost_reason: lostReason || "other",
-      })
-      .eq("id", opportunityId);
-  } else if (outcome === "no_need" && opportunityId) {
-    await supabase
-      .from("sales_opportunities")
-      .update({
-        status: "on_hold",
-        last_contact_at: now,
-        next_followup_at: nextFollowupAt,
-      })
-      .eq("id", opportunityId);
-  }
-
-  const followupOutcome: Record<string, string> = {
-    contacted: "follow_up_later",
-    requested_price: "requested_price",
-    ordered: "order_placed",
-    no_answer: "no_answer",
-    no_need: "no_need",
-    follow_up: "follow_up_later",
-    lost: "lost",
-  };
-
-  const { error: followupError } = await supabase.from("followups").insert({
-    customer_id: customerId,
-    channel: "phone",
-    outcome: followupOutcome[outcome],
-    notes: notes || `ثبت نتیجه از کمپین: ${memberStatusLabels[outcome] ?? outcome}`,
-    next_followup_at: nextFollowupAt,
-    potential_value: orderValue || null,
-    campaign_id: campaignId,
-    campaign_member_id: memberId,
-    opportunity_id: opportunityId || null,
+  const { error } = await supabase.rpc("record_campaign_member_result", {
+    p_request_id: requestId,
+    p_campaign_id: campaignId,
+    p_member_id: memberId,
+    p_outcome: outcome,
+    p_order_value: orderValue || null,
+    p_lost_reason: lostReason || null,
+    p_notes:
+      notes || `ثبت نتیجه از کمپین: ${memberStatusLabels[outcome] ?? outcome}`,
   });
-
-  if (followupError) redirect(`/campaigns/${campaignId}?error=followup`);
-
-  const memberUpdate = {
-    status: outcome,
-    contacted_at: now,
-    responded_at:
-      outcome === "requested_price" ||
-      outcome === "ordered" ||
-      outcome === "no_need" ||
-      outcome === "follow_up" ||
-      outcome === "lost"
-        ? now
-        : null,
-    ordered_at: outcome === "ordered" ? now : null,
-    next_followup_at: nextFollowupAt,
-    order_value: outcome === "ordered" && orderValue ? orderValue : null,
-    lost_reason: outcome === "lost" ? lostReason || "other" : null,
-    notes: notes || null,
-  };
-
-  const { error: memberError } = await supabase
-    .from("campaign_members")
-    .update(memberUpdate)
-    .eq("id", memberId)
-    .eq("campaign_id", campaignId);
-
-  if (memberError) redirect(`/campaigns/${campaignId}?error=member`);
-
-  const { error: customerError } = await supabase
-    .from("customers")
-    .update({ next_followup_at: nextFollowupAt })
-    .eq("id", customerId);
-
-  if (customerError) redirect(`/campaigns/${campaignId}?error=customer`);
+  if (error) redirect(`/campaigns/${campaignId}?error=save`);
 
   revalidatePath(`/campaigns/${campaignId}`);
   revalidatePath("/campaigns");
@@ -297,6 +168,7 @@ async function fetchCustomersByIds(
   ids: string[],
 ) {
   const rows: Array<Record<string, unknown>> = [];
+  let failed = false;
   for (let index = 0; index < ids.length; index += 400) {
     const { data, error } = await supabase
       .from("customer_sales_summary")
@@ -304,10 +176,34 @@ async function fetchCustomersByIds(
         "id,name,phone,city,address,priority,last_purchase_at,days_since_last_purchase,total_sales",
       )
       .in("id", ids.slice(index, index + 400));
-    if (error) throw new Error(error.message);
+    if (error) {
+      failed = true;
+      break;
+    }
     rows.push(...(data ?? []));
   }
-  return rows;
+  return { rows, failed };
+}
+
+async function fetchAllCampaignMembers(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  campaignId: string,
+) {
+  const rows: CampaignMemberRow[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("campaign_members")
+      .select(
+        "id,customer_id,status,contacted_at,responded_at,ordered_at,next_followup_at,order_value,lost_reason,notes,created_at",
+      )
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: true })
+      .range(offset, offset + 999);
+    if (error) return { rows, failed: true };
+    const page = (data ?? []) as CampaignMemberRow[];
+    rows.push(...page);
+    if (page.length < 1000) return { rows, failed: false };
+  }
 }
 
 export default async function CampaignDetailPage({
@@ -322,6 +218,7 @@ export default async function CampaignDetailPage({
     error?: string;
     created?: string;
     finished?: string;
+    page?: string;
   }>;
 }) {
   const { id } = await params;
@@ -330,37 +227,30 @@ export default async function CampaignDetailPage({
     ? query.status ?? ""
     : "";
   const search = (query.q ?? "").trim().slice(0, 80);
+  const requestedPage = Math.max(1, Number.parseInt(query.page ?? "1", 10) || 1);
   const supabase = await createClient();
 
-  const [{ data: campaign, error: campaignError }, { data: memberRows, error: memberError }] =
+  const [{ data: campaign, error: campaignError }, memberResult] =
     await Promise.all([
       supabase
         .from("campaign_performance_summary")
         .select("*")
         .eq("id", id)
         .single(),
-      supabase
-        .from("campaign_members")
-        .select(
-          "id,customer_id,status,contacted_at,responded_at,ordered_at,next_followup_at,order_value,lost_reason,notes,created_at",
-        )
-        .eq("campaign_id", id)
-        .order("created_at", { ascending: true })
-        .limit(2500),
+      fetchAllCampaignMembers(supabase, id),
     ]);
 
   if (campaignError || !campaign) notFound();
-  if (memberError) throw new Error(memberError.message);
 
-  const typedMembers = (memberRows ?? []) as CampaignMemberRow[];
+  const typedMembers = memberResult.rows;
   const typedCampaign = campaign as CampaignDetail;
   const customerIds = typedMembers.map((row: CampaignMemberRow) => row.customer_id);
-  const customers = await fetchCustomersByIds(supabase, customerIds);
+  const customerResult = await fetchCustomersByIds(supabase, customerIds);
   const customerMap = new Map(
-    (customers as CampaignCustomer[]).map((customer: CampaignCustomer) => [customer.id, customer]),
+    (customerResult.rows as CampaignCustomer[]).map((customer: CampaignCustomer) => [customer.id, customer]),
   );
 
-  const members = typedMembers
+  const matchingMembers = typedMembers
     .map((member: CampaignMemberRow) => ({ ...member, customer: customerMap.get(member.customer_id) }))
     .filter((member): member is CampaignMemberRow & { customer: CampaignCustomer } => Boolean(member.customer))
     .filter((member) => !statusFilter || member.status === statusFilter)
@@ -370,8 +260,11 @@ export default async function CampaignDetailPage({
       return `${customer.name ?? ""} ${customer.phone ?? ""} ${customer.city ?? ""}`
         .toLocaleLowerCase("fa")
         .includes(search.toLocaleLowerCase("fa"));
-    })
-    .slice(0, 500);
+    });
+  const pageSize = 30;
+  const pageCount = Math.max(1, Math.ceil(matchingMembers.length / pageSize));
+  const page = Math.min(requestedPage, pageCount);
+  const members = matchingMembers.slice((page - 1) * pageSize, page * pageSize);
 
   const errorMessage =
     query.error === "invalid"
@@ -402,6 +295,11 @@ export default async function CampaignDetailPage({
       {query.finished ? <div className={styles.success}>کمپین با موفقیت تکمیل شد.</div> : null}
       {query.saved ? <div className={styles.success}>نتیجه مشتری با موفقیت ثبت شد.</div> : null}
       {errorMessage ? <div className={styles.alert}>{errorMessage}</div> : null}
+      {memberResult.failed || customerResult.failed ? (
+        <div className={styles.alert}>
+          فهرست مشتریان کمپین کامل دریافت نشد. دوباره تلاش کنید. شناسه خطا: CRM-CAMPAIGN-READ
+        </div>
+      ) : null}
 
       <section className={styles.summary}>
         <div className={styles.summaryMain}>
@@ -448,7 +346,6 @@ export default async function CampaignDetailPage({
           <article><span>فروش کمپین</span><strong>{formatMoney(typedCampaign.order_value)}</strong></article>
         </div>
       </section>
-
       <section className={styles.toolbar}>
         <form method="get" className={styles.filterForm}>
           <input name="q" defaultValue={search} placeholder="نام، موبایل یا شهر..." />
@@ -510,6 +407,7 @@ export default async function CampaignDetailPage({
               </div>
 
               <form action={saveCampaignResult} className={styles.resultForm}>
+                <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                 <input type="hidden" name="campaign_id" value={id} />
                 <input type="hidden" name="member_id" value={member.id} />
                 <input type="hidden" name="customer_id" value={customer.id} />
@@ -543,6 +441,23 @@ export default async function CampaignDetailPage({
           </div>
         )}
       </section>
+      {pageCount > 1 ? (
+        <nav className={styles.pagination} aria-label="صفحه‌بندی مشتریان کمپین">
+          <Link
+            aria-disabled={page <= 1}
+            href={{ pathname: `/campaigns/${id}`, query: { q: search || undefined, status: statusFilter || undefined, page: Math.max(1, page - 1) } }}
+          >
+            صفحه قبل
+          </Link>
+          <span>صفحه {number.format(page)} از {number.format(pageCount)} · {number.format(matchingMembers.length)} مشتری</span>
+          <Link
+            aria-disabled={page >= pageCount}
+            href={{ pathname: `/campaigns/${id}`, query: { q: search || undefined, status: statusFilter || undefined, page: Math.min(pageCount, page + 1) } }}
+          >
+            صفحه بعد
+          </Link>
+        </nav>
+      ) : null}
     </AppShell>
   );
 }

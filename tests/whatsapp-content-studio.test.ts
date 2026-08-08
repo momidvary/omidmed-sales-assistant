@@ -23,10 +23,12 @@ import {
   buildImagePayload,
   buildTemplatePayload,
   buildTextPayload,
+  fetchWhatsAppTemplates,
   isAmbiguousWhatsAppProviderError,
   loadWhatsAppCloudConfig,
   normalizeIranianMobile,
   parseWhatsAppProviderResponse,
+  parseWhatsAppTemplates,
   sendWhatsAppMessage,
   WhatsAppCloudError,
 } from "../src/lib/whatsapp/cloud-api";
@@ -77,6 +79,58 @@ test("builds a Meta template payload", () => {
   const payload = buildTemplatePayload("09123456789", "follow_up_fa", ["کلینیک امید"]);
   assert.equal(payload.template.name, "follow_up_fa");
   assert.equal(payload.template.components?.[0].parameters[0].text, "کلینیک امید");
+});
+
+test("parses only official template records and counts variables", () => {
+  const templates = parseWhatsAppTemplates({
+    data: [
+      {
+        id: "meta-template-1",
+        name: "quote_follow_up",
+        status: "approved",
+        language: "fa",
+        category: "marketing",
+        components: [{ type: "BODY", text: "سلام {{1}}، قیمت {{2}}" }],
+      },
+      { id: "bad", name: "Invalid Name", status: "APPROVED", language: "fa", category: "MARKETING" },
+    ],
+  });
+  assert.equal(templates.length, 1);
+  assert.equal(templates[0].status, "APPROVED");
+  assert.equal(templates[0].variableCount, 2);
+});
+
+test("template synchronization follows Meta pagination without a real request", async () => {
+  const requested: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    requested.push(url);
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer synthetic-token");
+    const second = url.includes("after=cursor-1");
+    return new Response(JSON.stringify({
+      data: [{
+        id: second ? "meta-2" : "meta-1",
+        name: second ? "second_template" : "first_template",
+        status: "APPROVED",
+        language: "fa",
+        category: "MARKETING",
+        components: [],
+      }],
+      ...(second ? {} : { paging: { cursors: { after: "cursor-1" }, next: "synthetic-next" } }),
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const templates = await fetchWhatsAppTemplates({
+    config: {
+      token: "synthetic-token",
+      phoneNumberId: "synthetic-phone",
+      businessAccountId: "synthetic-waba",
+      graphApiVersion: "v23.0",
+    },
+    fetchImpl,
+  });
+  assert.equal(templates.length, 2);
+  assert.equal(requested.length, 2);
+  assert.match(requested[1], /after=cursor-1/);
 });
 
 test("preserves exact wamid as a string", () => {
@@ -343,8 +397,8 @@ test("WhatsApp prompt forbids invented commercial facts", () => {
   assert.match(prompt, /قیمت، تخفیف، موجودی/);
 });
 
-test("all nine WhatsApp content types build a structured prompt", () => {
-  assert.equal(WHATSAPP_CONTENT_TYPES.length, 9);
+test("all supported WhatsApp content types build a structured prompt", () => {
+  assert.equal(WHATSAPP_CONTENT_TYPES.length, 12);
   for (const contentType of WHATSAPP_CONTENT_TYPES) {
     const prompt = buildWhatsAppPrompt({ topic: "محصول تست", objective: "sales", contentType });
     assert.match(prompt, /نوع محتوا:/);

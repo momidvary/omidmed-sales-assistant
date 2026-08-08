@@ -51,6 +51,9 @@ type CustomerRow = {
   total_sales: number | string | null;
   avg_purchase_gap_days: number | string | null;
   days_since_last_purchase: number | string | null;
+  holo_balance_amount: number | string | null;
+  holo_balance_status: string | null;
+  holo_last_synced_at: string | null;
 };
 
 type FollowupRow = {
@@ -411,6 +414,7 @@ async function saveFollowup(formData: FormData) {
     0,
     Number(formData.get("potential_value") ?? 0) || 0,
   );
+  const requestId = String(formData.get("request_id") ?? "").trim();
 
   const nextFollowupResult = parseJalaliTehranDateTime({
     year: String(formData.get("next_followup_year") ?? ""),
@@ -419,7 +423,7 @@ async function saveFollowup(formData: FormData) {
     time: String(formData.get("next_followup_time") ?? ""),
   });
 
-  if (!customerId || !outcome) {
+  if (!customerId || !outcome || !/^[0-9a-f-]{36}$/i.test(requestId)) {
     redirect(`/customers/${customerId}?error=required#followup-form`);
   }
 
@@ -430,44 +434,18 @@ async function saveFollowup(formData: FormData) {
   const supabase = await createClient();
   const nextFollowupAt = nextFollowupResult.value;
 
-  const { error: insertError } = await supabase
-    .from("followups")
-    .insert({
-      customer_id: customerId,
-      channel,
-      outcome,
-      notes: notes || null,
-      next_followup_at: nextFollowupAt,
-      potential_value: potentialValue || null,
-    });
+  const { error: mutationError } = await supabase.rpc("record_customer_followup", {
+    p_request_id: requestId,
+    p_customer_id: customerId,
+    p_channel: channel,
+    p_outcome: outcome,
+    p_notes: notes || null,
+    p_next_followup_at: nextFollowupAt,
+    p_potential_value: potentialValue || null,
+  });
 
-  if (insertError) {
+  if (mutationError) {
     redirect(`/customers/${customerId}?error=save#followup-form`);
-  }
-
-  const customerUpdate: Record<string, unknown> = {
-    next_followup_at: nextFollowupAt,
-  };
-
-  if (outcome === "lost") {
-    customerUpdate.status = "lost";
-    customerUpdate.lead_stage = "lost";
-  } else if (outcome === "order_placed") {
-    customerUpdate.status = "active";
-    customerUpdate.lead_stage = "converted";
-  } else if (outcome === "requested_price") {
-    customerUpdate.lead_stage = "quoted";
-  } else if (channel === "phone") {
-    customerUpdate.lead_stage = "contacted";
-  }
-
-  const { error: updateError } = await supabase
-    .from("customers")
-    .update(customerUpdate)
-    .eq("id", customerId);
-
-  if (updateError) {
-    redirect(`/customers/${customerId}?error=nextdate#followup-form`);
   }
 
 
@@ -508,7 +486,7 @@ export default async function CustomerPage({
     supabase
       .from("customer_crm_summary")
       .select(
-        "id,name,contact_name,phone,province,city,address,preferred_products,status,priority,notes,next_followup_at,lead_stage,lead_source,potential_value,archived_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase",
+        "id,name,contact_name,phone,province,city,address,preferred_products,status,priority,notes,next_followup_at,lead_stage,lead_source,potential_value,archived_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at",
       )
       .eq("id", id)
       .single(),
@@ -541,6 +519,7 @@ export default async function CustomerPage({
         "id,invoice_number,document_number,invoice_date,due_date,total_quantity,total_amount,cash_amount,check_amount,card_amount,account_balance_amount,account_balance_status,discount_amount,discount_percent,transaction_status",
       )
       .eq("customer_id", id)
+      .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
       .order("invoice_date", { ascending: false })
       .limit(50),
     supabase
@@ -624,15 +603,10 @@ export default async function CustomerPage({
         item.status === "open" || item.status === "on_hold",
     ) ?? null;
 
-  const debtAmount = invoices
-    .filter(
-      (invoice) => invoice.account_balance_status === "debtor",
-    )
-    .reduce(
-      (sum, invoice) =>
-        sum + numeric(invoice.account_balance_amount),
-      0,
-    );
+  const debtAmount =
+    customer.holo_balance_status === "debtor"
+      ? numeric(customer.holo_balance_amount)
+      : 0;
 
   const topProduct =
     productSummary[0]?.product_name ??
@@ -782,8 +756,7 @@ export default async function CustomerPage({
 
       {followupsResult.error ? (
         <div className={styles.error}>
-          خطا در خواندن سابقه پیگیری:{" "}
-          {followupsResult.error.message}
+          خواندن سابقه پیگیری کامل نشد. شناسه خطا: CUSTOMER_FOLLOWUPS_READ_FAILED
         </div>
       ) : null}
 
@@ -972,9 +945,12 @@ export default async function CustomerPage({
         </article>
 
         <article>
-          <span>مانده بدهی</span>
-          <strong>{formatMoney(debtAmount)}</strong>
-          <small>تومان</small>
+          <span>مانده حساب هلو</span>
+          <strong>{formatMoney(customer.holo_balance_amount)}</strong>
+          <small>
+            تومان · {balanceLabels[customer.holo_balance_status ?? ""] ?? "نامشخص"}
+            {customer.holo_last_synced_at ? ` · همگام‌سازی ${formatDateTime(customer.holo_last_synced_at)}` : ""}
+          </small>
         </article>
       </section>
 
@@ -1124,6 +1100,7 @@ export default async function CustomerPage({
               name="customer_id"
               value={customer.id}
             />
+            <input type="hidden" name="request_id" value={crypto.randomUUID()} />
 
             <label>
               روش ارتباط
@@ -1319,8 +1296,7 @@ export default async function CustomerPage({
           />
         ) : (
           <div className={styles.error}>
-            بخش فایل‌ها هنوز آماده نیست:{" "}
-            {customerFilesResult.error.message}
+            بخش فایل‌ها در دسترس نیست. شناسه خطا: CUSTOMER_FILES_READ_FAILED
           </div>
         )}
       </div>
@@ -1344,8 +1320,7 @@ export default async function CustomerPage({
 
         {opportunitiesResult.error ? (
           <div className={styles.inlineError}>
-            خواندن فرصت‌های فروش انجام نشد:{" "}
-            {opportunitiesResult.error.message}
+            خواندن فرصت‌های فروش انجام نشد. شناسه خطا: CUSTOMER_OPPORTUNITIES_READ_FAILED
           </div>
         ) : opportunities.length === 0 ? (
           <div className={styles.emptyState}>
@@ -1425,14 +1400,12 @@ export default async function CustomerPage({
 
         {invoicesResult.error ? (
           <div className={styles.inlineError}>
-            خواندن جزئیات فاکتورها انجام نشد:{" "}
-            {invoicesResult.error.message}
+            خواندن جزئیات فاکتورها انجام نشد. شناسه خطا: CUSTOMER_INVOICES_READ_FAILED
           </div>
         ) : invoices.length === 0 ? (
           salesResult.error ? (
             <div className={styles.inlineError}>
-              خواندن فاکتورها انجام نشد:{" "}
-              {salesResult.error.message}
+              خواندن فاکتورها انجام نشد. شناسه خطا: CUSTOMER_SALES_READ_FAILED
             </div>
           ) : sales.length === 0 ? (
             <div className={styles.emptyState}>
@@ -1528,7 +1501,7 @@ export default async function CustomerPage({
                     </span>
 
                     <span>
-                      مانده:{" "}
+                      مانده همین فاکتور:{" "}
                       <b>
                         {formatMoney(
                           invoice.account_balance_amount,

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { safeOriginalFilename, validateMedicalDocument } from "@/lib/uploads/medical-document";
 import styles from "./accounting-attachment-uploader.module.css";
 
 export type AccountingAttachment = {
@@ -15,16 +16,7 @@ export type AccountingAttachment = {
   created_at: string;
 };
 
-const ALLOWED = ["image/png", "image/jpeg", "application/pdf"];
 const MAX = 10 * 1024 * 1024;
-
-function extension(file: File) {
-  const fromName = file.name.split(".").pop()?.toLowerCase();
-  if (fromName && /^[a-z0-9]{2,5}$/.test(fromName)) return fromName;
-  if (file.type === "image/png") return "png";
-  if (file.type === "image/jpeg") return "jpg";
-  return "pdf";
-}
 
 export default function AccountingAttachmentUploader({
   entityType,
@@ -59,8 +51,12 @@ export default function AccountingAttachmentUploader({
     event.preventDefault();
     setMessage(null);
     if (!selected) return setMessage("ابتدا فایل را انتخاب کن.");
-    if (!ALLOWED.includes(selected.type)) return setMessage("فقط PNG، JPG و PDF مجاز است.");
-    if (selected.size > MAX) return setMessage("حجم فایل باید کمتر از ۱۰ مگابایت باشد.");
+    let validated;
+    try {
+      validated = await validateMedicalDocument(selected, MAX);
+    } catch (error) {
+      return setMessage(error instanceof Error ? error.message : "فایل معتبر نیست.");
+    }
 
     setBusy(true);
     const { data: userData } = await supabase.auth.getUser();
@@ -70,13 +66,13 @@ export default function AccountingAttachmentUploader({
       return setMessage("نشست ورود معتبر نیست.");
     }
 
-    const path = `${userId}/${entityType}/${entityId}/${crypto.randomUUID()}.${extension(selected)}`;
+    const path = `${userId}/${entityType}/${entityId}/${crypto.randomUUID()}.${validated.extension}`;
     const { error: uploadError } = await supabase.storage
       .from("accounting-files")
-      .upload(path, selected, { contentType: selected.type, upsert: false });
+      .upload(path, selected, { contentType: validated.mimeType, upsert: false });
     if (uploadError) {
       setBusy(false);
-      return setMessage(`بارگذاری انجام نشد: ${uploadError.message}`);
+      return setMessage("بارگذاری انجام نشد. شناسه خطا: ATTACHMENT-UPLOAD");
     }
 
     const { data, error } = await supabase
@@ -85,8 +81,8 @@ export default function AccountingAttachmentUploader({
         entity_type: entityType,
         entity_id: entityId,
         storage_path: path,
-        original_name: selected.name,
-        mime_type: selected.type,
+        original_name: safeOriginalFilename(selected.name),
+        mime_type: validated.mimeType,
         size_bytes: selected.size,
       })
       .select("id,entity_type,entity_id,storage_path,original_name,mime_type,size_bytes,created_at")
@@ -95,7 +91,7 @@ export default function AccountingAttachmentUploader({
     if (error || !data) {
       await supabase.storage.from("accounting-files").remove([path]);
       setBusy(false);
-      return setMessage(`ثبت فایل انجام نشد: ${error?.message ?? "خطای نامشخص"}`);
+      return setMessage("ثبت فایل انجام نشد. شناسه خطا: ATTACHMENT-SAVE");
     }
 
     setFiles((current) => [data as AccountingAttachment, ...current]);
@@ -111,7 +107,7 @@ export default function AccountingAttachmentUploader({
     setBusy(true);
     const { error } = await supabase.from("accounting_attachments").delete().eq("id", file.id);
     if (!error) await supabase.storage.from("accounting-files").remove([file.storage_path]);
-    if (error) setMessage(`حذف انجام نشد: ${error.message}`);
+    if (error) setMessage("حذف فایل انجام نشد. شناسه خطا: ATTACHMENT-DELETE");
     else setFiles((current) => current.filter((item) => item.id !== file.id));
     setBusy(false);
   }

@@ -1,4 +1,7 @@
 export const WHATSAPP_CONTENT_TYPES = [
+  "whatsapp_sales",
+  "whatsapp_follow_up",
+  "whatsapp_quote_follow_up",
   "product_intro",
   "price_follow_up",
   "repurchase",
@@ -82,6 +85,9 @@ export const whatsappOutputSchema = {
 } as const;
 
 const contentTypeLabels: Record<WhatsAppContentType, string> = {
+  whatsapp_sales: "پیام فروش واتساپ",
+  whatsapp_follow_up: "پیگیری واتساپ",
+  whatsapp_quote_follow_up: "پیگیری پیش‌فاکتور واتساپ",
   product_intro: "معرفی محصول",
   price_follow_up: "پیگیری قیمت",
   repurchase: "یادآوری خرید مجدد",

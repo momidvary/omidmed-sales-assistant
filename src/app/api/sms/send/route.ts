@@ -4,7 +4,9 @@ import { addTehranDaysAtTen } from "@/lib/campaigns/constants";
 import {
   normalizeIranMobile,
   normalizeSender,
+  ensureSingleSmsOptOut,
   sendSimpleSms,
+  SmsProviderError,
 } from "@/lib/sms/melipayamak";
 
 const allowedSources = new Set([
@@ -14,6 +16,8 @@ const allowedSources = new Set([
   "campaign",
   "accounting",
 ]);
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function clean(value: unknown, maxLength = 1000) {
   return String(value ?? "").trim().slice(0, maxLength);
@@ -63,16 +67,18 @@ export async function POST(request: Request) {
   const campaignMemberId =
     clean(body.campaignMemberId, 80) || null;
   const opportunityId = clean(body.opportunityId, 80) || null;
-  const text = clean(body.text, 1500);
+  const rawText = clean(body.text, 1500);
   const sourceValue = clean(body.source, 30);
   const source = allowedSources.has(sourceValue)
     ? sourceValue
     : "manual";
+  const text = source === "campaign" ? ensureSingleSmsOptOut(rawText) : rawText;
   const scheduleFollowup = body.scheduleFollowup !== false;
+  const clientRequestId = clean(body.clientRequestId, 80);
 
-  if (!text) {
+  if (!rawText || !uuidPattern.test(clientRequestId)) {
     return NextResponse.json(
-      { error: "متن پیامک خالی است." },
+      { error: "متن یا شناسه امن درخواست پیامک معتبر نیست." },
       { status: 400 },
     );
   }
@@ -129,6 +135,52 @@ export async function POST(request: Request) {
     );
   }
 
+  const { data: pending, error: pendingError } = await supabase
+    .from("sms_messages")
+    .insert({
+      client_request_id: clientRequestId,
+      customer_id: customerId,
+      campaign_id: campaignId,
+      campaign_member_id: campaignMemberId,
+      opportunity_id: opportunityId,
+      source,
+      mode: "multiple",
+      sender,
+      recipient: mobile,
+      message_text: text,
+      request_success: false,
+      delivery_status: "unknown",
+    })
+    .select("id,request_success,delivery_status,provider_rec_id")
+    .single();
+
+  if (pendingError || !pending) {
+    const { data: existing } = await supabase
+      .from("sms_messages")
+      .select("id,request_success,delivery_status,provider_rec_id")
+      .eq("client_request_id", clientRequestId)
+      .maybeSingle();
+    if (existing) {
+      return NextResponse.json(
+        {
+          success: existing.request_success,
+          duplicate: true,
+          recId: existing.provider_rec_id,
+          status: existing.delivery_status,
+          code:
+            existing.delivery_status === "unknown"
+              ? "PROVIDER_RESULT_UNKNOWN"
+              : "DUPLICATE_REQUEST",
+        },
+        { status: existing.request_success ? 200 : 409 },
+      );
+    }
+    return NextResponse.json(
+      { success: false, code: "SMS_REQUEST_SAVE_FAILED", error: "ثبت امن درخواست پیامک انجام نشد." },
+      { status: 503 },
+    );
+  }
+
   let providerResult: Awaited<
     ReturnType<typeof sendSimpleSms>
   >;
@@ -140,30 +192,29 @@ export async function POST(request: Request) {
       text,
     });
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "ارسال پیامک انجام نشد.";
-
-    await supabase.from("sms_messages").insert({
-      customer_id: customerId,
-      campaign_id: campaignId,
-      campaign_member_id: campaignMemberId,
-      opportunity_id: opportunityId,
-      source,
-      mode: "multiple",
-      sender,
-      recipient: mobile,
-      message_text: text,
-      request_success: false,
-      provider_status: message,
-      delivery_status: "failed",
-      error_message: message,
-    });
+    const ambiguous = !(error instanceof SmsProviderError) || error.ambiguous;
+    await supabase
+      .from("sms_messages")
+      .update({
+        request_success: false,
+        provider_status: ambiguous ? "provider_result_unknown" : "failed",
+        delivery_status: ambiguous ? "unknown" : "failed",
+        error_message: ambiguous
+          ? "نتیجه Provider نامشخص است؛ ارسال خودکار تکرار نشود."
+          : "Provider درخواست را نپذیرفت.",
+        provider_result_unknown_at: ambiguous ? new Date().toISOString() : null,
+      })
+      .eq("id", pending.id);
 
     return NextResponse.json(
-      { success: false, error: message },
-      { status: 502 },
+      {
+        success: false,
+        code: ambiguous ? "PROVIDER_RESULT_UNKNOWN" : "PROVIDER_REJECTED",
+        error: ambiguous
+          ? "نتیجه ارسال مشخص نشد؛ برای جلوگیری از پیام تکراری دوباره ارسال نکنید."
+          : "سرویس پیامک درخواست را نپذیرفت.",
+      },
+      { status: ambiguous ? 504 : 502 },
     );
   }
 
@@ -173,16 +224,7 @@ export async function POST(request: Request) {
 
   const { error: logError } = await supabase
     .from("sms_messages")
-    .insert({
-      customer_id: customerId,
-      campaign_id: campaignId,
-      campaign_member_id: campaignMemberId,
-      opportunity_id: opportunityId,
-      source,
-      mode: "multiple",
-      sender,
-      recipient: mobile,
-      message_text: text,
+    .update({
       provider_rec_id: providerResult.recId,
       request_success: providerResult.success,
       provider_status: providerResult.status || null,
@@ -193,7 +235,8 @@ export async function POST(request: Request) {
         ? null
         : rejectionMessage,
       sent_at: new Date().toISOString(),
-    });
+    })
+    .eq("id", pending.id);
 
   if (logError) {
     return NextResponse.json(
@@ -210,49 +253,14 @@ export async function POST(request: Request) {
     );
   }
 
-  if (providerResult.success && customerId) {
+  if (providerResult.success) {
     const nextFollowupAt = scheduleFollowup
       ? addTehranDaysAtTen(3)
       : null;
-
-    await supabase.from("followups").insert({
-      customer_id: customerId,
-      channel: "sms",
-      outcome: "follow_up_later",
-      notes: `پیامک ارسال شد: ${text.slice(0, 500)}`,
-      next_followup_at: nextFollowupAt,
-      campaign_id: campaignId,
-      campaign_member_id: campaignMemberId,
-      opportunity_id: opportunityId,
+    await supabase.rpc("record_sms_crm_outcome", {
+      p_sms_message_id: pending.id,
+      p_next_followup_at: nextFollowupAt,
     });
-
-    if (scheduleFollowup) {
-      await supabase
-        .from("customers")
-        .update({ next_followup_at: nextFollowupAt })
-        .eq("id", customerId);
-    }
-
-    if (campaignMemberId) {
-      await supabase
-        .from("campaign_members")
-        .update({
-          status: "contacted",
-          contacted_at: new Date().toISOString(),
-          next_followup_at: nextFollowupAt,
-        })
-        .eq("id", campaignMemberId);
-    }
-
-    if (opportunityId) {
-      await supabase
-        .from("sales_opportunities")
-        .update({
-          last_contact_at: new Date().toISOString(),
-          next_followup_at: nextFollowupAt,
-        })
-        .eq("id", opportunityId);
-    }
   }
 
   return NextResponse.json(

@@ -223,8 +223,9 @@ export async function POST(request: Request) {
       reviewResolved,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "خطای ناشناخته";
-    console.error("Apply expense classifications error:", message);
-    return NextResponse.json({ error: "ثبت تصمیم‌های هزینه انجام نشد. دوباره تلاش کن." }, { status: 500 });
+    console.error("Applying expense classifications failed", {
+      type: error instanceof Error ? error.name : "UnknownError",
+    });
+    return NextResponse.json({ error: "ثبت تصمیم‌های هزینه انجام نشد. شناسه خطا: EXPENSE-APPLY" }, { status: 500 });
   }
 }

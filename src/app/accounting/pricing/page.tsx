@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import AccountingNav from "@/components/accounting-nav";
 import { createClient } from "@/lib/supabase/server";
+import { payrollTotals } from "@/lib/finance/metrics";
 import {
   calculateProductPricing,
   type CostingProduct,
@@ -148,27 +149,36 @@ export default async function PricingPage({ searchParams }: { searchParams: Prom
     supabase.from("material_cost_summary").select("id,name,unit,latest_unit_cost,weighted_avg_unit_cost,replacement_unit_cost,latest_purchase_date,replacement_price_at").eq("is_active", true).limit(5000),
     supabase.from("price_snapshots").select("product_id,snapshot_date,cash_price,created_at").order("created_at", { ascending: false }).limit(1000),
     supabase.from("workshop_expenses").select("amount,cost_behavior,cost_scope,manufacturing_share_percent,classification_status").gte("expense_date", currentRange.from).lt("expense_date", currentRange.toExclusive),
-    supabase.from("payroll_entries").select("net_pay,employer_costs").eq("jalali_year", currentRange.year).eq("jalali_month", currentRange.month),
+    supabase.from("payroll_entries").select("base_salary,overtime_amount,bonus_amount,allowance_amount,deductions_amount,advance_amount,paid_amount,employer_costs").eq("jalali_year", currentRange.year).eq("jalali_month", currentRange.month),
   ]);
 
   const rawSettings = (settingsResult.data ?? defaultSettings) as CostingSettings;
   const currentManufacturingExpenses = (expenseResult.data ?? []).reduce((sum, item) => {
     const amount = Number(item.amount ?? 0);
-    if (["confirmed", "auto"].includes(item.classification_status ?? "")) {
+    if (item.classification_status === "confirmed") {
       return item.cost_scope === "manufacturing"
         ? sum + amount * (Number(item.manufacturing_share_percent ?? 0) / 100)
         : sum;
     }
-    return item.cost_behavior !== "variable" ? sum + amount : sum;
+    return sum;
   }, 0);
   const currentSellingExpenses = (expenseResult.data ?? []).reduce(
     (sum, item) =>
-      ["confirmed", "auto"].includes(item.classification_status ?? "") && item.cost_scope === "selling"
+      item.classification_status === "confirmed" && item.cost_scope === "selling"
         ? sum + Number(item.amount ?? 0)
         : sum,
     0,
   );
-  const currentPayrollCost = (payrollResult.data ?? []).reduce((sum, item) => sum + Number(item.net_pay ?? 0) + Number(item.employer_costs ?? 0), 0);
+  const currentPayrollCost = (payrollResult.data ?? []).reduce((sum, item) => sum + payrollTotals({
+    baseSalary: item.base_salary,
+    overtime: item.overtime_amount,
+    bonus: item.bonus_amount,
+    allowance: item.allowance_amount,
+    deductions: item.deductions_amount,
+    advance: item.advance_amount,
+    paid: item.paid_amount,
+    employerCosts: item.employer_costs,
+  }).laborCost, 0);
   const actualMonthlyOverhead = currentManufacturingExpenses + (rawSettings.include_payroll_in_overhead === false ? 0 : currentPayrollCost);
   const settings: CostingSettings = {
     ...rawSettings,

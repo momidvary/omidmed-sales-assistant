@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import AccountingNav from "@/components/accounting-nav";
@@ -65,33 +66,50 @@ type Expense = {
   is_recurring: boolean;
 };
 
-export default async function ExpensesPage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+export default async function ExpensesPage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; page?: string }> }) {
   const params = await searchParams;
+  const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const pageSize = 30;
+  const from = (page - 1) * pageSize;
   const supabase = await createClient();
-  const [expenseResult, attachmentResult] = await Promise.all([
-    supabase.from("workshop_expenses").select("id,expense_date,category,cost_behavior,amount,payee,payment_method,description,is_recurring").order("expense_date", { ascending: false }).limit(100),
-    supabase.from("accounting_attachments").select("id,entity_type,entity_id,storage_path,original_name,mime_type,size_bytes,created_at").eq("entity_type", "expense").order("created_at", { ascending: false }).limit(300),
-  ]);
+  const expenseResult = await supabase
+    .from("workshop_expenses")
+    .select("id,expense_date,category,cost_behavior,amount,payee,payment_method,description,is_recurring", { count: "exact" })
+    .order("expense_date", { ascending: false })
+    .range(from, from + pageSize - 1);
   const expenses = (expenseResult.data ?? []) as Expense[];
+  const expenseIds = expenses.map((expense) => expense.id);
+  const attachmentResult = expenseIds.length
+    ? await supabase.from("accounting_attachments").select("id,entity_type,entity_id,storage_path,original_name,mime_type,size_bytes,created_at").eq("entity_type", "expense").in("entity_id", expenseIds).order("created_at", { ascending: false })
+    : { data: [] as AccountingAttachment[], error: null };
   const attachments = (attachmentResult.data ?? []) as AccountingAttachment[];
   const attachmentMap = new Map<string, AccountingAttachment[]>();
   for (const file of attachments) attachmentMap.set(file.entity_id, [...(attachmentMap.get(file.entity_id) ?? []), file]);
-  const total = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
-  const fixed = expenses.filter((item) => item.cost_behavior === "fixed").reduce((sum, item) => sum + Number(item.amount), 0);
-  const variable = expenses.filter((item) => item.cost_behavior === "variable").reduce((sum, item) => sum + Number(item.amount), 0);
+  const allAmounts: Array<{ amount: number | string; cost_behavior: string }> = [];
+  for (let offset = 0; ; offset += 1000) {
+    const result = await supabase.from("workshop_expenses").select("amount,cost_behavior").order("id").range(offset, offset + 999);
+    const rows = (result.data ?? []) as typeof allAmounts;
+    allAmounts.push(...rows);
+    if (result.error || rows.length < 1000) break;
+  }
+  const total = allAmounts.reduce((sum, item) => sum + Number(item.amount), 0);
+  const fixed = allAmounts.filter((item) => item.cost_behavior === "fixed").reduce((sum, item) => sum + Number(item.amount), 0);
+  const variable = allAmounts.filter((item) => item.cost_behavior === "variable").reduce((sum, item) => sum + Number(item.amount), 0);
+  const totalRows = expenseResult.count ?? allAmounts.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
   return (
     <AppShell active="accounting" title="هزینه‌های کارگاه" subtitle="هزینه‌هایی را ثبت کن که در فاکتور مواد یا حقوق ماهانه نیستند.">
       <AccountingNav active="expenses" />
-      {expenseResult.error ? <div className={styles.alert}>ابتدا SQL مرحله ۱۴ را اجرا کن. جزئیات: {expenseResult.error.message}</div> : null}
+      {expenseResult.error ? <div className={styles.alert}>هزینه‌ها دریافت نشدند. شناسه خطا: ACCOUNTING-EXPENSES-READ</div> : null}
       {params.error ? <div className={styles.alert}>{params.error === "invalid" ? "تاریخ، مبلغ یا دسته هزینه معتبر نیست." : "ثبت هزینه انجام نشد."}</div> : null}
       {params.saved ? <div className={styles.success}>هزینه با موفقیت ثبت شد.</div> : null}
 
       <section className={styles.metrics}>
-        <article className={styles.metric}><span>جمع ۱۰۰ هزینه اخیر</span><strong>{formatMoney(total)}</strong><small>برای گزارش دقیق‌تر از بازه‌های داشبورد استفاده می‌شود.</small></article>
+        <article className={styles.metric}><span>جمع همه هزینه‌های ثبت‌شده</span><strong>{formatMoney(total)}</strong><small>بدون محدودیت پنهان در تعداد رکوردها</small></article>
         <article className={styles.metric}><span>هزینه ثابت</span><strong>{formatMoney(fixed)}</strong><small>مثل اجاره، نرم‌افزار و بخشی از حقوق</small></article>
         <article className={styles.metric}><span>هزینه متغیر</span><strong>{formatMoney(variable)}</strong><small>مثل چاپ، دوخت، بسته‌بندی و حمل</small></article>
-        <article className={styles.metric}><span>هزینه‌های ثبت‌شده</span><strong>{expenses.length.toLocaleString("fa-IR")}</strong><small>آخرین رکوردها</small></article>
+        <article className={styles.metric}><span>هزینه‌های ثبت‌شده</span><strong>{totalRows.toLocaleString("fa-IR")}</strong><small>نمایش صفحه‌ای</small></article>
       </section>
 
       <section className={styles.grid}>
@@ -125,6 +143,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: Pro
       <article className={`${styles.panel} ${styles.panelWide}`} style={{ marginTop: 16 }}>
         <header className={styles.panelHeader}><div><h2>آخرین هزینه‌ها</h2><p>رسید یا تصویر پرداخت را کنار هر ردیف بارگذاری کن.</p></div></header>
         {expenses.length ? <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>تاریخ</th><th>دسته</th><th>طرف حساب</th><th>مبلغ</th><th>نوع / روش</th><th>توضیح</th><th>رسید</th></tr></thead><tbody>{expenses.map((expense) => <tr key={expense.id}><td>{formatDate(expense.expense_date)}</td><td><strong>{expenseCategoryLabels[expense.category] ?? expense.category}</strong><small>{expense.is_recurring ? "تکرارشونده" : "موردی"}</small></td><td>{expense.payee || "—"}</td><td className={styles.numberCell}><strong>{formatMoney(expense.amount)}</strong></td><td>{costBehaviorLabels[expense.cost_behavior]}<small>{paymentMethodLabels[expense.payment_method]}</small></td><td>{expense.description || "—"}</td><td><AccountingAttachmentUploader entityType="expense" entityId={expense.id} initialFiles={attachmentMap.get(expense.id) ?? []} /></td></tr>)}</tbody></table></div> : <div className={styles.empty}>هنوز هزینه‌ای ثبت نشده است.</div>}
+        {totalPages > 1 ? <div className={styles.actionRow}>{page > 1 ? <Link href={`/accounting/expenses?page=${page - 1}`}>صفحه قبل</Link> : <span /> }<span>صفحه {page.toLocaleString("fa-IR")} از {totalPages.toLocaleString("fa-IR")}</span>{page < totalPages ? <Link href={`/accounting/expenses?page=${page + 1}`}>صفحه بعد</Link> : <span />}</div> : null}
       </article>
     </AppShell>
   );

@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { cleanText, formatDate, formatMoney } from "@/lib/accounting/format";
 import { paymentStatusLabels } from "@/lib/accounting/constants";
 import PurchaseInvoiceForm from "./purchase-invoice-form";
+import PurchasePaymentForm from "./purchase-payment-form";
 import styles from "../accounting.module.css";
 
 async function addSupplier(formData: FormData) {
@@ -34,33 +35,43 @@ type Invoice = {
   other_costs: number | string;
   total_amount: number | string;
   payment_status: string;
+  paid_amount: number | string | null;
+  outstanding_amount: number | string | null;
+  derived_payment_status: string;
   due_date: string | null;
-  supplier: { name: string } | null;
+  supplier_name: string | null;
 };
 
-export default async function PurchasesPage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string }> }) {
+export default async function PurchasesPage({ searchParams }: { searchParams: Promise<{ error?: string; saved?: string; page?: string }> }) {
   const params = await searchParams;
+  const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const pageSize = 25;
+  const from = (page - 1) * pageSize;
   const supabase = await createClient();
-  const [supplierResult, materialResult, invoiceResult, attachmentResult] = await Promise.all([
+  const [supplierResult, materialResult, invoiceResult] = await Promise.all([
     supabase.from("suppliers").select("id,name").eq("is_active", true).order("name"),
     supabase.from("materials").select("id,name,unit").eq("is_active", true).order("name"),
-    supabase.from("purchase_invoices").select("id,invoice_number,invoice_date,subtotal,shipping_amount,other_costs,total_amount,payment_status,due_date,supplier:suppliers(name)").order("invoice_date", { ascending: false }).limit(50),
-    supabase.from("accounting_attachments").select("id,entity_type,entity_id,storage_path,original_name,mime_type,size_bytes,created_at").eq("entity_type", "purchase_invoice").order("created_at", { ascending: false }).limit(200),
+    supabase.from("purchase_invoice_balances").select("id,invoice_number,invoice_date,subtotal,shipping_amount,other_costs,total_amount,payment_status,paid_amount,outstanding_amount,derived_payment_status,due_date,supplier_name", { count: "exact" }).order("invoice_date", { ascending: false }).range(from, from + pageSize - 1),
   ]);
 
   const suppliers = supplierResult.data ?? [];
   const materials = materialResult.data ?? [];
   const invoices = (invoiceResult.data ?? []) as unknown as Invoice[];
+  const invoiceIds = invoices.map((invoice) => invoice.id);
+  const attachmentResult = invoiceIds.length
+    ? await supabase.from("accounting_attachments").select("id,entity_type,entity_id,storage_path,original_name,mime_type,size_bytes,created_at").eq("entity_type", "purchase_invoice").in("entity_id", invoiceIds).order("created_at", { ascending: false })
+    : { data: [], error: null };
   const attachments = (attachmentResult.data ?? []) as AccountingAttachment[];
   const attachmentMap = new Map<string, AccountingAttachment[]>();
   for (const file of attachments) attachmentMap.set(file.entity_id, [...(attachmentMap.get(file.entity_id) ?? []), file]);
   const databaseError = supplierResult.error || materialResult.error || invoiceResult.error;
+  const totalPages = Math.max(1, Math.ceil((invoiceResult.count ?? invoices.length) / pageSize));
   const errorMessage = params.error === "supplier-invalid" ? "نام تأمین‌کننده الزامی است." : params.error === "supplier-duplicate" ? "این تأمین‌کننده قبلاً ثبت شده است." : params.error ? "ثبت تأمین‌کننده انجام نشد." : null;
 
   return (
     <AppShell active="accounting" title="فاکتورهای خرید" subtitle="خرید مواد، حمل و هزینه‌های جانبی را ثبت کن تا بهای مؤثر هر واحد محاسبه شود.">
       <AccountingNav active="purchases" />
-      {databaseError ? <div className={styles.alert}>ابتدا SQL مرحله ۱۴ را اجرا کن. جزئیات: {databaseError.message}</div> : null}
+      {databaseError ? <div className={styles.alert}>اطلاعات خرید در دسترس نیست. شناسه خطا: PURCHASES_READ_FAILED</div> : null}
       {errorMessage ? <div className={styles.alert}>{errorMessage}</div> : null}
       {params.saved === "invoice-ai" ? <div className={styles.success}>فاکتور هوشمند با موفقیت ثبت و فایل آن آرشیو شد.</div> : params.saved ? <div className={styles.success}>تأمین‌کننده با موفقیت ثبت شد.</div> : null}
 
@@ -90,7 +101,8 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
 
       <article className={`${styles.panel} ${styles.panelWide}`} style={{ marginTop: 16 }}>
         <header className={styles.panelHeader}><div><h2>آخرین فاکتورهای خرید</h2><p>فایل اصل فاکتور را نیز می‌توانی کنار هر ردیف نگه داری.</p></div></header>
-        {invoices.length ? <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>تأمین‌کننده / شماره</th><th>تاریخ</th><th>جمع اقلام</th><th>هزینه جانبی</th><th>مبلغ نهایی</th><th>وضعیت</th><th>فایل فاکتور</th></tr></thead><tbody>{invoices.map((invoice) => <tr key={invoice.id}><td><strong>{invoice.supplier?.name ?? "نامشخص"}</strong><small>شماره: {invoice.invoice_number || "ثبت نشده"}</small></td><td>{formatDate(invoice.invoice_date)}<small>{invoice.due_date ? `سررسید ${formatDate(invoice.due_date)}` : "بدون سررسید"}</small></td><td className={styles.numberCell}>{formatMoney(invoice.subtotal)}</td><td className={styles.numberCell}>{formatMoney(Number(invoice.shipping_amount) + Number(invoice.other_costs))}</td><td className={styles.numberCell}><strong>{formatMoney(invoice.total_amount)}</strong></td><td><span className={styles.status}>{paymentStatusLabels[invoice.payment_status] ?? invoice.payment_status}</span></td><td><AccountingAttachmentUploader entityType="purchase_invoice" entityId={invoice.id} initialFiles={attachmentMap.get(invoice.id) ?? []} /></td></tr>)}</tbody></table></div> : <div className={styles.empty}>هنوز فاکتور خریدی ثبت نشده است.</div>}
+        {invoices.length ? <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>تأمین‌کننده / شماره</th><th>تاریخ</th><th>مبلغ نهایی</th><th>پرداخت‌شده</th><th>مانده واقعی</th><th>وضعیت</th><th>ثبت پرداخت</th><th>فایل فاکتور</th></tr></thead><tbody>{invoices.map((invoice) => <tr key={invoice.id}><td><strong>{invoice.supplier_name ?? "نامشخص"}</strong><small>شماره: {invoice.invoice_number || "ثبت نشده"}</small></td><td>{formatDate(invoice.invoice_date)}<small>{invoice.due_date ? `سررسید ${formatDate(invoice.due_date)}` : "بدون سررسید"}</small></td><td className={styles.numberCell}><strong>{formatMoney(invoice.total_amount)}</strong></td><td className={styles.numberCell}>{invoice.paid_amount === null ? "نیازمند بررسی" : formatMoney(invoice.paid_amount)}</td><td className={styles.numberCell}><strong>{invoice.outstanding_amount === null ? "محاسبه نشده" : formatMoney(invoice.outstanding_amount)}</strong></td><td><span className={styles.status}>{invoice.derived_payment_status === "needs_review" ? "نیازمند تعیین پرداخت قبلی" : paymentStatusLabels[invoice.derived_payment_status] ?? invoice.derived_payment_status}</span></td><td><PurchasePaymentForm invoiceId={invoice.id} outstanding={invoice.outstanding_amount === null ? null : Number(invoice.outstanding_amount)} totalAmount={Number(invoice.total_amount)} /></td><td><AccountingAttachmentUploader entityType="purchase_invoice" entityId={invoice.id} initialFiles={attachmentMap.get(invoice.id) ?? []} /></td></tr>)}</tbody></table></div> : <div className={styles.empty}>هنوز فاکتور خریدی ثبت نشده است.</div>}
+        {totalPages > 1 ? <nav className={styles.actionRow}>{page > 1 ? <Link href={`/accounting/purchases?page=${page - 1}`}>صفحه قبل</Link> : null}<span>صفحه {page.toLocaleString("fa-IR")} از {totalPages.toLocaleString("fa-IR")}</span>{page < totalPages ? <Link href={`/accounting/purchases?page=${page + 1}`}>صفحه بعد</Link> : null}</nav> : null}
       </article>
     </AppShell>
   );

@@ -48,6 +48,9 @@ type CustomerSummaryRow = {
   total_sales: number | string | null;
   avg_purchase_gap_days: number | string | null;
   days_since_last_purchase: number | string | null;
+  holo_balance_amount: number | string | null;
+  holo_balance_status: string | null;
+  holo_last_synced_at: string | null;
 };
 
 type ProductSummaryRow = {
@@ -63,8 +66,6 @@ type InvoiceRow = {
   invoice_date: string;
   total_amount: number | string | null;
   discount_amount: number | string | null;
-  account_balance_amount: number | string | null;
-  account_balance_status: string | null;
 };
 
 type FollowupRow = {
@@ -266,9 +267,9 @@ async function buildCustomerContext(
   const [customerResult, productsResult, invoicesResult, followupsResult] =
     await Promise.all([
       supabase
-        .from("customer_sales_summary")
+        .from("customer_crm_summary")
         .select(
-          "id,name,contact_name,city,status,priority,notes,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase",
+          "id,name,contact_name,city,status,priority,notes,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at",
         )
         .eq("id", customerId)
         .single(),
@@ -283,9 +284,10 @@ async function buildCustomerContext(
       supabase
         .from("invoices")
         .select(
-          "invoice_number,invoice_date,total_amount,discount_amount,account_balance_amount,account_balance_status",
+          "invoice_number,invoice_date,total_amount,discount_amount",
         )
         .eq("customer_id", customerId)
+        .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
         .order("invoice_date", { ascending: false })
         .limit(5),
       supabase
@@ -476,13 +478,10 @@ export async function POST(request: Request) {
         mode === "customer"
           ? await buildCustomerContext(supabase, customerId)
           : await buildCampaignContext(supabase, campaignId);
-    } catch (error) {
+    } catch {
       return NextResponse.json(
         {
-          error:
-            error instanceof Error
-              ? error.message
-              : "اطلاعات لازم برای پیشنهاد پیامک خوانده نشد.",
+          error: "اطلاعات لازم برای پیشنهاد پیامک خوانده نشد. شناسه خطا: SMS-AI-CONTEXT",
         },
         { status: 500 },
       );
@@ -536,8 +535,11 @@ export async function POST(request: Request) {
           "مدل تنظیم‌شده برای این قابلیت مناسب نیست؛ مقدار OPENAI_MODEL را بررسی کن.";
       }
 
-      console.error("AI SMS suggestion error:", response.status, rawMessage);
-      return NextResponse.json({ error: userMessage }, { status: 502 });
+      console.error("AI SMS suggestion request failed", { status: response.status });
+      return NextResponse.json(
+        { error: `${userMessage} شناسه خطا: SMS-SUGGEST-PROVIDER` },
+        { status: 502 },
+      );
     }
 
     const outputText = extractOutputText(data);
@@ -577,16 +579,15 @@ export async function POST(request: Request) {
       error instanceof Error &&
       (error.name === "TimeoutError" || error.name === "AbortError");
 
-    console.error(
-      "AI SMS suggestion route error:",
-      error instanceof Error ? error.message : error,
-    );
+    console.error("AI SMS suggestion route failed", {
+      type: error instanceof Error ? error.name : "UnknownError",
+    });
 
     return NextResponse.json(
       {
         error: isTimeout
           ? "پاسخ هوش مصنوعی بیش از حد طول کشید؛ دوباره تلاش کن."
-          : "در آماده‌سازی پیشنهاد پیامک خطایی رخ داد.",
+          : "در آماده‌سازی پیشنهاد پیامک خطایی رخ داد. شناسه خطا: SMS-SUGGEST-RUNTIME",
       },
       { status: 500 },
     );

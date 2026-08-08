@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import AppShell, { Icon } from "@/components/app-shell";
 import { createClient } from "@/lib/supabase/server";
+import { escapeLike, normalizeSearchText } from "@/lib/search/normalize";
 import styles from "./customers.module.css";
 
 const number = new Intl.NumberFormat("fa-IR");
@@ -60,7 +61,7 @@ const leadStageLabel: Record<string, string> = {
 };
 
 const filterLabel: Record<string, string> = {
-  urgent: "پیگیری فوری؛ ویژه و زیاد",
+  urgent: "اقدام فوری؛ موعد رسیده",
   vip: "فقط مشتریان ویژه",
   high: "فقط اولویت زیاد",
   normal: "فقط اولویت متوسط",
@@ -148,21 +149,28 @@ export default async function CustomersPage({
   let productFilterError: string | null = null;
 
   if (productSearch) {
-    const { data: productMatches, error: productError } = await supabase
-      .from("customer_product_summary")
-      .select("customer_id")
-      .ilike(
-        "product_name",
-        `%${productSearch.replace(/[%_]/g, "")}%`,
-      )
-      .limit(5000);
+    const productMatches: Array<{ customer_id: string }> = [];
+    let productError: { message: string } | null = null;
+    for (let rangeFrom = 0; ; rangeFrom += 1000) {
+      const result = await supabase
+        .from("customer_product_summary")
+        .select("customer_id")
+        .ilike("product_name", `%${escapeLike(productSearch)}%`)
+        .range(rangeFrom, rangeFrom + 999);
+      if (result.error) {
+        productError = result.error;
+        break;
+      }
+      productMatches.push(...((result.data ?? []) as Array<{ customer_id: string }>));
+      if ((result.data ?? []).length < 1000) break;
+    }
 
     if (productError) {
-      productFilterError = productError.message;
+      productFilterError = "CUSTOMER_PRODUCT_FILTER_FAILED";
     } else {
       matchingCustomerIds = Array.from(
         new Set(
-          (productMatches ?? []).map(
+          productMatches.map(
             (item) => item.customer_id as string,
           ),
         ),
@@ -191,18 +199,14 @@ export default async function CustomersPage({
   }
 
   if (search) {
-    const digits = search.replace(/\D/g, "");
-    query =
-      digits.length >= 4
-        ? query.ilike("normalized_phone", `%${digits}%`)
-        : query.ilike(
-            "name",
-            `%${search.replace(/[%_]/g, "")}%`,
-          );
+    query = query.ilike(
+      "search_document",
+      `%${escapeLike(normalizeSearchText(search))}%`,
+    );
   }
 
   if (priorityFilter === "urgent") {
-    query = query.in("priority", ["vip", "high"]);
+    query = query.lte("next_followup_at", new Date().toISOString());
   } else if (priorityFilter) {
     query = query.eq("priority", priorityFilter);
   }
@@ -379,13 +383,13 @@ export default async function CustomersPage({
       <section className={styles.tableCard}>
         {productFilterError ? (
           <div className={styles.error}>
-            خطا در فیلتر کالا: {productFilterError}
+            فیلتر کالا انجام نشد. شناسه خطا: {productFilterError}
           </div>
         ) : null}
 
         {error ? (
           <div className={styles.error}>
-            خطا در خواندن مشتریان: {error.message}
+            خواندن فهرست مشتریان انجام نشد. شناسه خطا: CUSTOMERS_READ_FAILED
           </div>
         ) : null}
 

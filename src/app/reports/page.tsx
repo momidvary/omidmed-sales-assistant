@@ -99,8 +99,8 @@ export default async function ReportsPage({
       supabase,
       invoices.map((invoice) => invoice.id),
     );
-  } catch (error) {
-    errorMessage = error instanceof Error ? error.message : "خطا در دریافت گزارش‌ها";
+  } catch {
+    errorMessage = "گزارش‌ها دریافت نشدند. شناسه خطا: REPORTS-READ";
   }
 
   const customerMap = new Map(customers.map((customer) => [customer.id, customer]));

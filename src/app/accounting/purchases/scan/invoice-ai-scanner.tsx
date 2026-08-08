@@ -1,12 +1,13 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { jalaliToGregorian } from "@/lib/jalali";
 import type { AIInvoiceExtraction } from "@/lib/accounting/invoice-ai";
 import { normalizeMatchText } from "@/lib/accounting/invoice-ai";
+import { safeOriginalFilename, validateMedicalDocument } from "@/lib/uploads/medical-document";
 import styles from "./invoice-ai-scanner.module.css";
 
 type Supplier = { id: string; name: string };
@@ -35,6 +36,7 @@ type Draft = {
   documentType: AIInvoiceExtraction["document_type"];
   originalCurrency: AIInvoiceExtraction["original_currency"];
   paymentStatus: string;
+  paidAmount: string;
   paymentMethod: string;
   discount: string;
   tax: string;
@@ -118,6 +120,7 @@ function buildDraft(extraction: AIInvoiceExtraction, suppliers: Supplier[], mate
     documentType: extraction.document_type,
     originalCurrency: extraction.original_currency,
     paymentStatus: extraction.payment_status === "unknown" ? "unpaid" : extraction.payment_status,
+    paidAmount: "0",
     paymentMethod: extraction.payment_method === "unknown" ? "bank_transfer" : extraction.payment_method,
     discount: roundText(extraction.discount_amount_toman),
     tax: roundText(extraction.tax_amount_toman),
@@ -166,16 +169,13 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState("");
+  const previewUrlRef = useRef("");
 
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl("");
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    return () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
 
   const calculatedSubtotal = draft?.items.reduce((sum, item) => {
     return sum + Math.max(0, numeric(item.quantity) * numeric(item.unitPrice) - numeric(item.discount) + numeric(item.tax));
@@ -191,6 +191,9 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
     setMessage(null);
     setDraft(null);
     setModel("");
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    previewUrlRef.current = "";
+    setPreviewUrl("");
     if (!next) return setFile(null);
     if (!["image/jpeg", "image/png", "application/pdf"].includes(next.type)) {
       event.target.value = "";
@@ -201,6 +204,8 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
       return setMessage("فایل اصلی باید کمتر از ۱۰ مگابایت باشد.");
     }
     setFile(next);
+    previewUrlRef.current = URL.createObjectURL(next);
+    setPreviewUrl(previewUrlRef.current);
   }
 
   async function analyze() {
@@ -217,8 +222,8 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
       setDraft(buildDraft(data.extraction, suppliers, materials));
       setModel(data.model ?? "");
       setMessage("پیش‌نویس ساخته شد. همه مبلغ‌ها، تاریخ و تطبیق مواد را قبل از ثبت کنترل کن.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تحلیل فاکتور انجام نشد.");
+    } catch {
+      setMessage("تحلیل فاکتور انجام نشد. شناسه خطا: INVOICE_AI_ANALYSIS_FAILED");
     } finally {
       setAnalyzing(false);
     }
@@ -245,6 +250,12 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
     if (!draft.items.length || draft.items.some((item) => !item.materialId || numeric(item.quantity) <= 0)) {
       return setMessage("برای همه اقلام، ماده درست و مقدار معتبر را انتخاب کن.");
     }
+    const openingPaid = draft.paymentStatus === "paid"
+      ? calculatedTotal
+      : numeric(draft.paidAmount);
+    if (openingPaid > calculatedTotal || (draft.paymentStatus === "partial" && openingPaid <= 0)) {
+      return setMessage("مبلغ پرداخت‌شده با وضعیت فاکتور تطابق ندارد.");
+    }
 
     setSaving(true);
     try {
@@ -257,7 +268,7 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
       if (draft.invoiceNumber.trim()) duplicateQuery = duplicateQuery.eq("invoice_number", draft.invoiceNumber.trim());
       else duplicateQuery = duplicateQuery.eq("total_amount", Math.round(calculatedTotal));
       const duplicateResult = await duplicateQuery;
-      if (duplicateResult.error) throw new Error(duplicateResult.error.message);
+      if (duplicateResult.error) throw new Error("duplicate-check-failed");
       if ((duplicateResult.data ?? []).length) {
         if (draft.invoiceNumber.trim()) {
           setSaving(false);
@@ -286,7 +297,7 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
         draft.notes.trim(),
       ].filter(Boolean).join(" | ");
 
-      const { data: invoiceId, error } = await supabase.rpc("create_purchase_invoice", {
+      const { data: invoiceId, error } = await supabase.rpc("create_purchase_invoice_v2", {
         p_supplier_id: draft.supplierId,
         p_invoice_number: draft.invoiceNumber.trim(),
         p_invoice_date: invoiceDate,
@@ -294,38 +305,42 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
         p_tax_amount: numeric(draft.tax),
         p_shipping_amount: numeric(draft.shipping),
         p_other_costs: numeric(draft.otherCosts),
-        p_payment_status: draft.paymentStatus,
         p_payment_method: draft.paymentMethod,
         p_due_date: dueDate,
         p_notes: auditNote,
         p_items: items,
+        p_opening_paid_amount: openingPaid,
       });
-      if (error || !invoiceId) throw new Error(error?.message ?? "ثبت فاکتور انجام نشد.");
+      if (error || !invoiceId) throw new Error("invoice-save-failed");
 
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData.user?.id;
       if (userId) {
-        const ext = file.name.split(".").pop()?.toLowerCase() || (file.type === "application/pdf" ? "pdf" : "jpg");
-        const path = `${userId}/purchase_invoice/${invoiceId}/${crypto.randomUUID()}.${ext}`;
-        const upload = await supabase.storage.from("accounting-files").upload(path, file, { contentType: file.type });
+        const validated = await validateMedicalDocument(file, 10 * 1024 * 1024);
+        const path = `${userId}/purchase_invoice/${invoiceId}/${crypto.randomUUID()}.${validated.extension}`;
+        const upload = await supabase.storage.from("accounting-files").upload(path, file, { contentType: validated.mimeType });
         if (!upload.error) {
-          await supabase.from("accounting_attachments").insert({
+          const { error: attachmentError } = await supabase.from("accounting_attachments").insert({
             entity_type: "purchase_invoice",
             entity_id: invoiceId,
             storage_path: path,
-            original_name: file.name,
-            mime_type: file.type,
+            original_name: safeOriginalFilename(file.name),
+            mime_type: validated.mimeType,
             size_bytes: file.size,
           });
+          if (attachmentError) {
+            await supabase.storage.from("accounting-files").remove([path]);
+            setMessage("فاکتور ثبت شد، اما مشخصات فایل ذخیره نشد. شناسه خطا: INVOICE_FILE_SAVE_FAILED");
+          }
         } else {
-          setMessage(`فاکتور ثبت شد اما فایل آرشیو نشد: ${upload.error.message}`);
+          setMessage("فاکتور ثبت شد، اما فایل آرشیو نشد. شناسه خطا: INVOICE_FILE_UPLOAD_FAILED");
         }
       }
 
       router.push("/accounting/purchases?saved=invoice-ai");
       router.refresh();
-    } catch (error) {
-      setMessage(error instanceof Error ? `ثبت انجام نشد: ${error.message}` : "ثبت انجام نشد.");
+    } catch {
+      setMessage("ثبت انجام نشد. شناسه خطا: INVOICE_AI_SAVE_FAILED");
       setSaving(false);
     }
   }
@@ -394,6 +409,7 @@ export default function InvoiceAIScanner({ suppliers, materials }: { suppliers: 
               <label>تاریخ شمسی<input value={draft.invoiceDate} onChange={(event) => patchDraft({ invoiceDate: event.target.value })} placeholder="۱۴۰۵/۰۴/۲۲" dir="ltr" /></label>
               <label>تاریخ سررسید<input value={draft.dueDate} onChange={(event) => patchDraft({ dueDate: event.target.value })} placeholder="اختیاری" dir="ltr" /></label>
               <label>وضعیت پرداخت<select value={draft.paymentStatus} onChange={(event) => patchDraft({ paymentStatus: event.target.value })}><option value="unpaid">پرداخت‌نشده</option><option value="partial">بخشی پرداخت شده</option><option value="paid">تسویه‌شده</option></select></label>
+              {draft.paymentStatus === "partial" ? <label>مبلغ پرداخت‌شده<input value={draft.paidAmount} inputMode="decimal" onChange={(event) => patchDraft({ paidAmount: event.target.value })} /></label> : null}
               <label>روش پرداخت<select value={draft.paymentMethod} onChange={(event) => patchDraft({ paymentMethod: event.target.value })}><option value="bank_transfer">واریز بانکی</option><option value="cash">نقد</option><option value="card">کارت</option><option value="cheque">چک</option><option value="credit">نسیه</option><option value="other">سایر</option></select></label>
             </div>
 

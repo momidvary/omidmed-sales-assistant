@@ -4,9 +4,7 @@ import { revalidatePath } from "next/cache";
 import AppShell, { Icon } from "@/components/app-shell";
 import { createClient } from "@/lib/supabase/server";
 import {
-  addTehranDaysAtTen,
   lostReasonLabels,
-  nextOpportunityStep,
   normalizePhoneForLink,
   opportunityStageLabels,
   opportunityStatusLabels,
@@ -88,105 +86,26 @@ async function updateOpportunity(formData: FormData) {
   const lostReason = clean(formData.get("lost_reason"), 40);
   const notes = clean(formData.get("notes"), 1500);
   const value = Math.max(0, Number(formData.get("value") ?? 0) || 0);
+  const requestId = clean(formData.get("request_id"), 80);
 
-  if (!opportunityId || !customerId || !allowedActions.has(action)) {
+  if (!opportunityId || !customerId || !allowedActions.has(action) || !/^[0-9a-f-]{36}$/i.test(requestId)) {
     redirect(`/quotes?view=${returnView}&error=invalid`);
   }
 
   const supabase = await createClient();
-  const { data: opportunity, error: readError } = await supabase
-    .from("sales_opportunities")
-    .select("id,status,stage,campaign_id,campaign_member_id,estimated_value")
-    .eq("id", opportunityId)
-    .single();
-
-  if (readError || !opportunity) {
-    redirect(`/quotes?view=${returnView}&error=missing`);
-  }
-
-  const now = new Date().toISOString();
-  let status = opportunity.status as string;
-  let stage = opportunity.stage as string;
-  let nextFollowupAt: string | null = null;
-  let followupOutcome = "follow_up_later";
-  let memberStatus = "follow_up";
-
-  if (action === "contacted" || action === "no_answer") {
-    const next = nextOpportunityStep(stage);
-    status = "open";
-    stage = next.stage;
-    nextFollowupAt = next.nextFollowupAt;
-    followupOutcome = action === "no_answer" ? "no_answer" : "follow_up_later";
-    memberStatus = action === "no_answer" ? "no_answer" : "follow_up";
-  } else if (action === "won") {
-    status = "won";
-    nextFollowupAt = null;
-    followupOutcome = "order_placed";
-    memberStatus = "ordered";
-  } else if (action === "lost") {
-    status = "lost";
-    nextFollowupAt = null;
-    followupOutcome = "lost";
-    memberStatus = "lost";
-  } else if (action === "hold") {
-    status = "on_hold";
-    nextFollowupAt = addTehranDaysAtTen(30);
-    followupOutcome = "no_need";
-    memberStatus = "no_need";
-  }
-
-  const { error: updateError } = await supabase
-    .from("sales_opportunities")
-    .update({
-      status,
-      stage,
-      last_contact_at: now,
-      next_followup_at: nextFollowupAt,
-      estimated_value: value || opportunity.estimated_value || null,
-      final_value: action === "won" ? value || opportunity.estimated_value || null : null,
-      lost_reason: action === "lost" ? lostReason || "other" : null,
-      notes: notes || null,
-    })
-    .eq("id", opportunityId);
-
-  if (updateError) redirect(`/quotes?view=${returnView}&error=save`);
-
-  const { error: followupError } = await supabase.from("followups").insert({
-    customer_id: customerId,
-    channel: "phone",
-    outcome: followupOutcome,
-    notes: notes || `ثبت از پیگیری قیمت: ${action}`,
-    next_followup_at: nextFollowupAt,
-    potential_value: value || null,
-    campaign_id: opportunity.campaign_id,
-    campaign_member_id: opportunity.campaign_member_id,
-    opportunity_id: opportunityId,
+  const { error } = await supabase.rpc("transition_sales_opportunity", {
+    p_request_id: requestId,
+    p_opportunity_id: opportunityId,
+    p_action: action,
+    p_value: value || null,
+    p_lost_reason: lostReason || null,
+    p_notes:
+      notes ||
+      (action === "won"
+        ? "توافق/سفارش در CRM ثبت شد؛ فاکتور حسابداری ایجاد نشده است."
+        : `ثبت از پیگیری قیمت: ${action}`),
   });
-
-  if (followupError) redirect(`/quotes?view=${returnView}&error=followup`);
-
-  if (opportunity.campaign_member_id) {
-    await supabase
-      .from("campaign_members")
-      .update({
-        status: memberStatus,
-        contacted_at: now,
-        responded_at: action === "no_answer" ? null : now,
-        ordered_at: action === "won" ? now : null,
-        next_followup_at: nextFollowupAt,
-        order_value: action === "won" ? value || opportunity.estimated_value || null : null,
-        lost_reason: action === "lost" ? lostReason || "other" : null,
-        notes: notes || null,
-      })
-      .eq("id", opportunity.campaign_member_id);
-  }
-
-  const { error: customerError } = await supabase
-    .from("customers")
-    .update({ next_followup_at: nextFollowupAt })
-    .eq("id", customerId);
-
-  if (customerError) redirect(`/quotes?view=${returnView}&error=customer`);
+  if (error) redirect(`/quotes?view=${returnView}&error=save`);
 
   revalidatePath("/quotes");
   revalidatePath("/campaigns");
@@ -200,48 +119,84 @@ async function fetchCustomersByIds(
   ids: string[],
 ) {
   const rows: Array<Record<string, unknown>> = [];
+  let failed = false;
   for (let index = 0; index < ids.length; index += 400) {
     const { data, error } = await supabase
       .from("customer_sales_summary")
       .select("id,name,phone,city,priority,last_purchase_at,days_since_last_purchase,total_sales")
       .in("id", ids.slice(index, index + 400));
-    if (error) throw new Error(error.message);
+    if (error) {
+      failed = true;
+      break;
+    }
     rows.push(...(data ?? []));
   }
-  return rows;
+  return { rows, failed };
 }
 
-export default async function QuotesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string; q?: string; saved?: string; error?: string }>;
-}) {
-  const params = await searchParams;
-  const view = allowedViews.has(params.view ?? "") ? params.view ?? "active" : "active";
-  const search = (params.q ?? "").trim().slice(0, 80);
-  const supabase = await createClient();
-
-  const [{ data: opportunities, error }, { data: campaigns }] = await Promise.all([
-    supabase
+async function fetchAllOpportunities(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+) {
+  const rows: OpportunityRow[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
       .from("sales_opportunities")
       .select(
         "id,customer_id,campaign_id,campaign_member_id,status,stage,source,product_interest,quoted_at,last_contact_at,next_followup_at,estimated_value,final_value,lost_reason,notes,created_at",
       )
       .order("next_followup_at", { ascending: true, nullsFirst: false })
-      .limit(2500),
-    supabase.from("campaigns").select("id,name").limit(500),
+      .range(offset, offset + 999);
+    if (error) return { rows, error: true };
+    const page = (data ?? []) as OpportunityRow[];
+    rows.push(...page);
+    if (page.length < 1000) return { rows, error: false };
+  }
+}
+
+async function fetchAllCampaigns(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+) {
+  const rows: CampaignLite[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("campaigns")
+      .select("id,name")
+      .range(offset, offset + 999);
+    if (error) return rows;
+    const page = (data ?? []) as CampaignLite[];
+    rows.push(...page);
+    if (page.length < 1000) return rows;
+  }
+}
+
+export default async function QuotesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string; q?: string; page?: string; saved?: string; error?: string }>;
+}) {
+  const params = await searchParams;
+  const view = allowedViews.has(params.view ?? "") ? params.view ?? "active" : "active";
+  const search = (params.q ?? "").trim().slice(0, 80);
+  const requestedPage = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const supabase = await createClient();
+
+  const [opportunityResult, campaigns] = await Promise.all([
+    fetchAllOpportunities(supabase),
+    fetchAllCampaigns(supabase),
   ]);
 
-  const rows = (opportunities ?? []) as OpportunityRow[];
+  const rows = opportunityResult.rows;
   const customerIds: string[] = Array.from(
     new Set(rows.map((row: OpportunityRow) => row.customer_id)),
   );
-  const customers = customerIds.length ? await fetchCustomersByIds(supabase, customerIds) : [];
+  const customerResult = customerIds.length
+    ? await fetchCustomersByIds(supabase, customerIds)
+    : { rows: [], failed: false };
   const customerMap = new Map(
-    (customers as OpportunityCustomer[]).map((customer: OpportunityCustomer) => [customer.id, customer]),
+    (customerResult.rows as OpportunityCustomer[]).map((customer: OpportunityCustomer) => [customer.id, customer]),
   );
   const campaignMap = new Map(
-    ((campaigns ?? []) as CampaignLite[]).map((campaign: CampaignLite) => [campaign.id, campaign.name]),
+    campaigns.map((campaign: CampaignLite) => [campaign.id, campaign.name]),
   );
 
   const activeRows = rows.filter((row: OpportunityRow) => row.status === "open" || row.status === "on_hold");
@@ -249,7 +204,7 @@ export default async function QuotesPage({
   const wonRows = rows.filter((row: OpportunityRow) => row.status === "won");
   const totalPipeline = activeRows.reduce((sum: number, row: OpportunityRow) => sum + numeric(row.estimated_value), 0);
 
-  const visible = rows
+  const matchingRows = rows
     .filter((row: OpportunityRow) => {
       if (view === "active") return row.status === "open" || row.status === "on_hold";
       if (view === "due") return (row.status === "open" || row.status === "on_hold") && isDue(row.next_followup_at);
@@ -270,8 +225,11 @@ export default async function QuotesPage({
       const dueDifference = Number(isDue(b.next_followup_at)) - Number(isDue(a.next_followup_at));
       if (dueDifference) return dueDifference;
       return numeric(b.estimated_value) - numeric(a.estimated_value);
-    })
-    .slice(0, 500);
+    });
+  const pageSize = 30;
+  const pageCount = Math.max(1, Math.ceil(matchingRows.length / pageSize));
+  const page = Math.min(requestedPage, pageCount);
+  const visible = matchingRows.slice((page - 1) * pageSize, page * pageSize);
 
   const errorMessage =
     params.error === "invalid"
@@ -289,14 +247,14 @@ export default async function QuotesPage({
   return (
     <AppShell
       active="quotes"
-      title="قیمت‌های بدون سفارش"
-      subtitle="قیمت‌هایی که هنوز به سفارش تبدیل نشده‌اند را در روزهای ۱، ۳ و ۷ پیگیری کن."
+      title="پیگیری قیمت‌ها و توافق‌های CRM"
+      subtitle="قیمت‌های باز را پیگیری کن؛ توافق CRM با فاکتور حسابداری هلو یکسان نیست."
     >
       {params.saved ? <div className={styles.success}>نتیجه پیگیری با موفقیت ثبت شد.</div> : null}
       {errorMessage ? <div className={styles.alert}>{errorMessage}</div> : null}
-      {error ? (
+      {opportunityResult.error || customerResult.failed ? (
         <div className={styles.alert}>
-          ابتدا فایل SQL مرحله ۱۳ را اجرا کن. جزئیات: {error.message}
+          اطلاعات فرصت‌های فروش کامل دریافت نشد. دوباره تلاش کنید. شناسه خطا: CRM-QUOTE-READ
         </div>
       ) : null}
 
@@ -315,7 +273,7 @@ export default async function QuotesPage({
         <article><span>فرصت باز</span><strong>{number.format(activeRows.length)}</strong></article>
         <article><span>موعد پیگیری</span><strong>{number.format(dueRows.length)}</strong></article>
         <article><span>ارزش احتمالی</span><strong>{formatMoney(totalPipeline)}</strong></article>
-        <article><span>تبدیل‌شده به سفارش</span><strong>{number.format(wonRows.length)}</strong></article>
+        <article><span>توافق ثبت‌شده در CRM (غیرفاکتوری)</span><strong>{number.format(wonRows.length)}</strong></article>
       </section>
 
       <section className={styles.toolbar}>
@@ -325,7 +283,7 @@ export default async function QuotesPage({
             ["due", "موعد پیگیری"],
             ["open", "فقط باز"],
             ["hold", "تعلیق موقت"],
-            ["won", "سفارش‌شده"],
+            ["won", "توافق CRM (غیرفاکتوری)"],
             ["lost", "از دست رفته"],
           ].map(([key, label]) => (
             <Link className={view === key ? styles.activeTab : ""} href={`/quotes?view=${key}`} key={key}>{label}</Link>
@@ -371,6 +329,7 @@ export default async function QuotesPage({
 
               {(row.status === "open" || row.status === "on_hold") ? (
                 <form action={updateOpportunity} className={styles.actionForm}>
+                  <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                   <input type="hidden" name="opportunity_id" value={row.id} />
                   <input type="hidden" name="customer_id" value={customer.id} />
                   <input type="hidden" name="return_view" value={view} />
@@ -378,7 +337,7 @@ export default async function QuotesPage({
                     <option value="contacted">پیگیری انجام شد؛ هنوز نخرید</option>
                     <option value="no_answer">پاسخ نداد</option>
                     <option value="hold">فعلاً نیاز ندارد؛ ۳۰ روز بعد</option>
-                    <option value="won">سفارش داد</option>
+                    <option value="won">توافق/سفارش CRM؛ فاکتور نیست</option>
                     <option value="lost">فروش از دست رفت</option>
                   </select>
                   <input name="value" type="number" min="0" defaultValue={numeric(row.estimated_value) || ""} placeholder="مبلغ احتمالی/نهایی" />
@@ -418,6 +377,23 @@ export default async function QuotesPage({
           </div>
         )}
       </section>
+      {pageCount > 1 ? (
+        <nav className={styles.pagination} aria-label="صفحه‌بندی فرصت‌های فروش">
+          <Link
+            aria-disabled={page <= 1}
+            href={{ pathname: "/quotes", query: { view, q: search || undefined, page: Math.max(1, page - 1) } }}
+          >
+            صفحه قبل
+          </Link>
+          <span>صفحه {number.format(page)} از {number.format(pageCount)} · {number.format(matchingRows.length)} نتیجه</span>
+          <Link
+            aria-disabled={page >= pageCount}
+            href={{ pathname: "/quotes", query: { view, q: search || undefined, page: Math.min(pageCount, page + 1) } }}
+          >
+            صفحه بعد
+          </Link>
+        </nav>
+      ) : null}
     </AppShell>
   );
 }

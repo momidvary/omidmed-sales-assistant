@@ -174,8 +174,11 @@ export async function POST(request: Request) {
           "مدل انتخاب‌شده در حساب API فعال نیست. مقدار OPENAI_MODEL را بررسی کن.";
       }
 
-      console.error("OpenAI Responses API error:", response.status, rawMessage);
-      return NextResponse.json({ error: userMessage }, { status: 502 });
+      console.error("OpenAI Responses API request failed", { status: response.status });
+      return NextResponse.json(
+        { error: `${userMessage} شناسه خطا: ASSISTANT-PROVIDER` },
+        { status: 502 },
+      );
     }
 
     const answer = extractOutputText(data);
@@ -192,8 +195,9 @@ export async function POST(request: Request) {
       usage: data.usage ?? null,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("Sales assistant route error:", message);
+    console.error("Sales assistant route failed", {
+      type: error instanceof Error ? error.name : "UnknownError",
+    });
 
     const isTimeout =
       error instanceof Error &&
@@ -203,7 +207,7 @@ export async function POST(request: Request) {
       {
         error: isTimeout
           ? "پاسخ هوش مصنوعی بیش از حد طول کشید؛ دوباره تلاش کن."
-          : "در آماده‌سازی پاسخ خطایی رخ داد. اتصال دیتابیس و تنظیمات را بررسی کن.",
+          : "در آماده‌سازی پاسخ خطایی رخ داد. شناسه خطا: ASSISTANT-RUNTIME",
       },
       { status: 500 },
     );

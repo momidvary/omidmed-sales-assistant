@@ -115,7 +115,7 @@ export default async function HoloSyncStatusPage() {
       {runsResult.error ? (
         <div className={styles.error}>
           گزارش همگام‌سازی خوانده نشد:{" "}
-          {runsResult.error.message}
+          شناسه خطا: HOLO-SYNC-RUNS-READ
         </div>
       ) : null}
 

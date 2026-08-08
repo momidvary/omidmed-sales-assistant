@@ -292,8 +292,10 @@ export async function GET(request: NextRequest) {
     }
 
     return Response.json({ error: "Invalid export type" }, { status: 400 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Export failed";
-    return Response.json({ error: message }, { status: 500 });
+  } catch {
+    return Response.json(
+      { error: "ساخت خروجی انجام نشد.", code: "EXPORT_FAILED" },
+      { status: 500 },
+    );
   }
 }

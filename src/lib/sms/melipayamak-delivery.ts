@@ -4,7 +4,7 @@ function statusText(value: unknown) {
   return value == null ? "" : String(value).trim();
 }
 
-function classifyDelivery(label: string) {
+export function classifyDelivery(label: string) {
   const compact = label.replace(/\s+/g, "");
 
   if (
@@ -15,7 +15,7 @@ function classifyDelivery(label: string) {
     return "undelivered" as const;
   }
 
-  if (/ارسالشده|تحویلشده|رسیده/.test(compact)) {
+  if (/تحویلشده|بهگوشیرسیده|رسیدهبهگوشی/.test(compact)) {
     return "delivered" as const;
   }
 

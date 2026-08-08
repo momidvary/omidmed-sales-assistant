@@ -4,8 +4,10 @@ import { addTehranDaysAtTen } from "@/lib/campaigns/constants";
 import {
   normalizeIranMobile,
   normalizeSender,
+  ensureSingleSmsOptOut,
   personalizeSmsTemplate,
   sendMultipleSms,
+  SmsProviderError,
 } from "@/lib/sms/melipayamak";
 
 type MemberRow = { id: string; customer_id: string; status: string };
@@ -24,6 +26,9 @@ type Target = {
   text: string;
 };
 
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function clean(value: unknown, maxLength = 1500) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
@@ -38,10 +43,58 @@ async function fetchCustomers(
       .from("customer_sales_summary")
       .select("id,name,phone,city,days_since_last_purchase")
       .in("id", ids.slice(index, index + 400));
-    if (error) throw new Error(error.message);
+    if (error) throw new Error("CUSTOMERS_READ_FAILED");
     rows.push(...((data ?? []) as CustomerRow[]));
   }
   return rows;
+}
+
+async function fetchCampaignMembers(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  campaignId: string,
+  statuses: string[],
+) {
+  const rows: MemberRow[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("campaign_members")
+      .select("id,customer_id,status")
+      .eq("campaign_id", campaignId)
+      .in("status", statuses)
+      .order("id")
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error("CAMPAIGN_MEMBERS_READ_FAILED");
+    const page = (data ?? []) as MemberRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
+async function fetchAmbiguousMemberIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  campaignId: string,
+) {
+  const ids = new Set<string>();
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("sms_messages")
+      .select("campaign_member_id")
+      .eq("campaign_id", campaignId)
+      .not("campaign_member_id", "is", null)
+      .not("provider_result_unknown_at", "is", null)
+      .order("id")
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error("AMBIGUOUS_SMS_READ_FAILED");
+    const page = (data ?? []) as Array<{ campaign_member_id: string | null }>;
+    page.forEach((row) => {
+      if (row.campaign_member_id) ids.add(row.campaign_member_id);
+    });
+    if (page.length < pageSize) break;
+  }
+  return ids;
 }
 
 export async function POST(request: Request) {
@@ -67,36 +120,41 @@ export async function POST(request: Request) {
   }
 
   const campaignId = clean(body.campaignId, 80);
-  const template = clean(body.template, 1500);
+  const rawTemplate = clean(body.template, 1500);
+  const template = ensureSingleSmsOptOut(rawTemplate);
   const includeRetries = body.includeRetries === true;
+  const clientRequestId = clean(body.clientRequestId, 80);
 
-  if (!campaignId || !template) {
+  if (!campaignId || !rawTemplate || !uuidPattern.test(clientRequestId)) {
     return NextResponse.json({ error: "کمپین یا متن پیامک کامل نیست." }, { status: 400 });
   }
 
-  const [{ data: campaign, error: campaignError }, { data: members, error: memberError }] =
-    await Promise.all([
-      supabase
-        .from("campaigns")
-        .select("id,name,target_product,status")
-        .eq("id", campaignId)
-        .single(),
-      supabase
-        .from("campaign_members")
-        .select("id,customer_id,status")
-        .eq("campaign_id", campaignId)
-        .in("status", includeRetries ? ["pending", "no_answer", "follow_up"] : ["pending"])
-        .limit(2500),
-    ]);
+  const { data: campaign, error: campaignError } = await supabase
+    .from("campaigns")
+    .select("id,name,target_product,status")
+    .eq("id", campaignId)
+    .single();
 
   if (campaignError || !campaign) {
     return NextResponse.json({ error: "کمپین پیدا نشد." }, { status: 404 });
   }
-  if (memberError) {
-    return NextResponse.json({ error: memberError.message }, { status: 500 });
+  let typedMembers: MemberRow[];
+  let ambiguousMemberIds: Set<string>;
+  try {
+    [typedMembers, ambiguousMemberIds] = await Promise.all([
+      fetchCampaignMembers(
+        supabase,
+        campaignId,
+        includeRetries ? ["pending", "no_answer", "follow_up"] : ["pending"],
+      ),
+      fetchAmbiguousMemberIds(supabase, campaignId),
+    ]);
+  } catch {
+    return NextResponse.json(
+      { error: "خواندن امن مخاطبان کمپین انجام نشد." },
+      { status: 500 },
+    );
   }
-
-  const typedMembers = (members ?? []) as MemberRow[];
   if (!typedMembers.length) {
     return NextResponse.json(
       { error: "مشتری ارسال‌نشده‌ای در این کمپین باقی نمانده است." },
@@ -110,9 +168,9 @@ export async function POST(request: Request) {
       supabase,
       typedMembers.map((member) => member.customer_id),
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "خواندن مشتریان انجام نشد." },
+      { error: "خواندن امن مشتریان انجام نشد. شناسه خطا: SMS-CAMPAIGN-CUSTOMERS" },
       { status: 500 },
     );
   }
@@ -122,6 +180,13 @@ export async function POST(request: Request) {
   const skipped: Array<{ customerId: string; reason: string }> = [];
 
   for (const member of typedMembers) {
+    if (ambiguousMemberIds.has(member.id)) {
+      skipped.push({
+        customerId: member.customer_id,
+        reason: "نتیجه ارسال قبلی نامشخص است",
+      });
+      continue;
+    }
     const customer = customerMap.get(member.customer_id);
     const mobile = normalizeIranMobile(customer?.phone);
     if (!customer || !mobile) {
@@ -157,126 +222,255 @@ export async function POST(request: Request) {
   const { data: batch, error: batchError } = await supabase
     .from("sms_send_batches")
     .insert({
+      client_request_id: clientRequestId,
       campaign_id: campaignId,
       mode: "multiple",
       sender,
       total_count: targets.length,
       success_count: 0,
       failed_count: 0,
+      unknown_count: 0,
+      unattempted_count: targets.length,
       status: "processing",
     })
     .select("id")
     .single();
 
   if (batchError || !batch) {
-    return NextResponse.json({ error: "ثبت سابقه ارسال گروهی انجام نشد." }, { status: 500 });
+    const { data: existing } = await supabase
+      .from("sms_send_batches")
+      .select("id,status,total_count,success_count,failed_count,unknown_count,unattempted_count")
+      .eq("client_request_id", clientRequestId)
+      .maybeSingle();
+    if (existing) {
+      return NextResponse.json(
+        {
+          success: existing.status === "completed",
+          duplicate: true,
+          code:
+            existing.status === "unknown"
+              ? "PROVIDER_RESULT_UNKNOWN"
+              : "DUPLICATE_REQUEST",
+          batchId: existing.id,
+          total: existing.total_count,
+          successCount: existing.success_count,
+          failedCount: existing.failed_count,
+          unknownCount: existing.unknown_count,
+          unattemptedCount: existing.unattempted_count,
+          error:
+            existing.status === "unknown"
+              ? "نتیجه بخشی از ارسال قبلی نامشخص است؛ ارسال خودکار تکرار نشد."
+              : undefined,
+        },
+        { status: existing.status === "completed" ? 200 : 409 },
+      );
+    }
+    return NextResponse.json({ error: "ثبت امن سابقه ارسال گروهی انجام نشد." }, { status: 503 });
   }
 
-  const results: Array<Target & { success: boolean; recId: string | null; status: string }> = [];
+  type StoredMessage = { id: string; campaign_member_id: string | null };
+  const storedMessages: StoredMessage[] = [];
+  const pendingRows = targets.map((target) => ({
+    batch_id: batch.id,
+    customer_id: target.customerId,
+    campaign_id: campaignId,
+    campaign_member_id: target.memberId,
+    source: "campaign",
+    mode: "multiple",
+    sender,
+    recipient: target.mobile,
+    message_text: target.text,
+    request_success: false,
+    delivery_status: "unknown",
+  }));
 
-  try {
-    for (let index = 0; index < targets.length; index += 100) {
-      const chunk = targets.slice(index, index + 100);
+  for (let index = 0; index < pendingRows.length; index += 200) {
+    const { data, error } = await supabase
+      .from("sms_messages")
+      .insert(pendingRows.slice(index, index + 200))
+      .select("id,campaign_member_id");
+    if (error) {
+      await supabase
+        .from("sms_send_batches")
+        .update({
+          status: "failed",
+          unattempted_count: targets.length,
+          provider_status: "message_persistence_failed",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", batch.id);
+      return NextResponse.json(
+        { error: "ذخیره امن پیام‌های کمپین انجام نشد؛ هیچ پیامی ارسال نشد." },
+        { status: 503 },
+      );
+    }
+    storedMessages.push(...((data ?? []) as StoredMessage[]));
+  }
+
+  const messageIdByMember = new Map(
+    storedMessages.map((message) => [message.campaign_member_id, message.id]),
+  );
+  const results: Array<
+    Target & { messageId: string; success: boolean; recId: string | null; status: string }
+  > = [];
+  let providerFailure: { ambiguous: boolean; attempted: number } | null = null;
+  let persistenceFailure = false;
+  let persistenceUnknownCount = 0;
+
+  for (let index = 0; index < targets.length; index += 100) {
+    const chunk = targets.slice(index, index + 100);
+    try {
       const providerResults = await sendMultipleSms({
         sender,
         to: chunk.map((target) => target.mobile),
         text: chunk.map((target) => target.text),
       });
-
-      providerResults.forEach((providerResult, resultIndex) => {
-        results.push({
-          ...chunk[resultIndex],
-          success: providerResult.success,
-          recId: providerResult.recId,
-          status: providerResult.status,
-        });
-      });
+      const recordedAt = new Date().toISOString();
+      const updates = await Promise.all(
+        providerResults.map(async (providerResult, resultIndex) => {
+          const target = chunk[resultIndex];
+          const messageId = messageIdByMember.get(target.memberId);
+          if (!messageId) return false;
+          const { error } = await supabase
+            .from("sms_messages")
+            .update({
+              provider_rec_id: providerResult.recId,
+              request_success: providerResult.success,
+              provider_status: providerResult.status || null,
+              delivery_status: providerResult.success ? "accepted" : "rejected",
+              error_message: providerResult.success ? null : "سرویس پیامک این گیرنده را نپذیرفت.",
+              sent_at: recordedAt,
+            })
+            .eq("id", messageId);
+          if (!error) {
+            results.push({
+              ...target,
+              messageId,
+              success: providerResult.success,
+              recId: providerResult.recId,
+              status: providerResult.status,
+            });
+          }
+          return !error;
+        }),
+      );
+      if (updates.some((updated) => !updated)) {
+        persistenceFailure = true;
+        persistenceUnknownCount = updates.filter((updated) => !updated).length;
+        break;
+      }
+    } catch (error) {
+      const ambiguous = !(error instanceof SmsProviderError) || error.ambiguous;
+      const attemptedAt = new Date().toISOString();
+      const ids = chunk
+        .map((target) => messageIdByMember.get(target.memberId))
+        .filter((id): id is string => Boolean(id));
+      if (ids.length) {
+        await supabase
+          .from("sms_messages")
+          .update({
+            provider_status: ambiguous ? "provider_result_unknown" : "provider_rejected",
+            delivery_status: ambiguous ? "unknown" : "failed",
+            error_message: ambiguous
+              ? "نتیجه Provider نامشخص است؛ ارسال خودکار تکرار نشود."
+              : "Provider درخواست گروهی را نپذیرفت.",
+            provider_result_unknown_at: ambiguous ? attemptedAt : null,
+          })
+          .in("id", ids);
+      }
+      providerFailure = { ambiguous, attempted: chunk.length };
+      break;
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "ارسال گروهی انجام نشد.";
-    await supabase
-      .from("sms_send_batches")
-      .update({ status: "failed", failed_count: targets.length, provider_status: message, completed_at: new Date().toISOString() })
-      .eq("id", batch.id);
-    return NextResponse.json({ error: message }, { status: 502 });
-  }
-
-  const now = new Date().toISOString();
-  const nextFollowupAt = addTehranDaysAtTen(3);
-  const messageRows = results.map((result) => ({
-    batch_id: batch.id,
-    customer_id: result.customerId,
-    campaign_id: campaignId,
-    campaign_member_id: result.memberId,
-    source: "campaign",
-    mode: "multiple",
-    sender,
-    recipient: result.mobile,
-    message_text: result.text,
-    provider_rec_id: result.recId,
-    request_success: result.success,
-    provider_status: result.status || null,
-    delivery_status: result.success ? "accepted" : "rejected",
-    error_message: result.success ? null : result.status || "ارسال رد شد.",
-    sent_at: now,
-  }));
-
-  for (let index = 0; index < messageRows.length; index += 200) {
-    await supabase.from("sms_messages").insert(messageRows.slice(index, index + 200));
   }
 
   const successful = results.filter((result) => result.success);
   const failed = results.filter((result) => !result.success);
-
-  if (successful.length) {
-    const memberIds = successful.map((result) => result.memberId);
-    const customerIds = successful.map((result) => result.customerId);
-
-    for (let index = 0; index < memberIds.length; index += 400) {
-      await supabase
-        .from("campaign_members")
-        .update({ status: "contacted", contacted_at: now, next_followup_at: nextFollowupAt })
-        .in("id", memberIds.slice(index, index + 400));
-    }
-
-    const followups = successful.map((result) => ({
-      customer_id: result.customerId,
-      channel: "sms",
-      outcome: "follow_up_later",
-      notes: `پیامک کمپین «${campaign.name}» ارسال شد: ${result.text.slice(0, 500)}`,
-      next_followup_at: nextFollowupAt,
-      campaign_id: campaignId,
-      campaign_member_id: result.memberId,
-    }));
-    for (let index = 0; index < followups.length; index += 200) {
-      await supabase.from("followups").insert(followups.slice(index, index + 200));
-    }
-
-    for (let index = 0; index < customerIds.length; index += 400) {
-      await supabase
-        .from("customers")
-        .update({ next_followup_at: nextFollowupAt })
-        .in("id", customerIds.slice(index, index + 400));
-    }
+  const nextFollowupAt = addTehranDaysAtTen(3);
+  let crmFailure = false;
+  for (const result of successful) {
+    const { error } = await supabase.rpc("record_sms_crm_outcome", {
+      p_sms_message_id: result.messageId,
+      p_next_followup_at: nextFollowupAt,
+    });
+    if (error) crmFailure = true;
   }
+
+  const completedAt = new Date().toISOString();
+  const attemptedCount =
+    results.length + (providerFailure?.attempted ?? 0) + persistenceUnknownCount;
+  const unknownCount =
+    (providerFailure?.ambiguous ? providerFailure.attempted : 0) +
+    persistenceUnknownCount;
+  const definiteProviderFailureCount = providerFailure && !providerFailure.ambiguous
+    ? providerFailure.attempted
+    : 0;
+  const unattemptedCount = Math.max(0, targets.length - attemptedCount);
+  const failedCount = failed.length + definiteProviderFailureCount;
+  const batchStatus = providerFailure?.ambiguous || persistenceFailure
+    ? "unknown"
+    : providerFailure
+      ? successful.length
+        ? "partial"
+        : "failed"
+      : failed.length
+        ? successful.length
+          ? "partial"
+          : "failed"
+        : "completed";
 
   await supabase
     .from("sms_send_batches")
     .update({
-      status: failed.length ? (successful.length ? "partial" : "failed") : "completed",
+      status: batchStatus,
       success_count: successful.length,
-      failed_count: failed.length,
-      provider_status: failed[0]?.status || null,
-      completed_at: now,
+      failed_count: failedCount,
+      unknown_count: unknownCount,
+      unattempted_count: unattemptedCount,
+      provider_status: providerFailure
+        ? providerFailure.ambiguous
+          ? "provider_result_unknown"
+          : "provider_rejected"
+        : persistenceFailure
+          ? "result_persistence_unknown"
+          : failed[0]?.status || null,
+      provider_result_unknown_at:
+        providerFailure?.ambiguous || persistenceFailure ? completedAt : null,
+      completed_at: completedAt,
     })
     .eq("id", batch.id);
+
+  if (providerFailure || persistenceFailure) {
+    const ambiguous = providerFailure?.ambiguous || persistenceFailure;
+    return NextResponse.json(
+      {
+        success: false,
+        code: ambiguous ? "PROVIDER_RESULT_UNKNOWN" : "PROVIDER_REJECTED",
+        error: ambiguous
+          ? "نتیجه بخشی از ارسال نامشخص است؛ برای جلوگیری از پیام تکراری دوباره ارسال نکنید."
+          : "سرویس پیامک ادامه ارسال کمپین را نپذیرفت.",
+        total: targets.length,
+        successCount: successful.length,
+        failedCount,
+        unknownCount,
+        unattemptedCount,
+        skippedCount: skipped.length,
+        batchId: batch.id,
+      },
+      { status: ambiguous ? 504 : 502 },
+    );
+  }
 
   return NextResponse.json({
     success: true,
     total: targets.length,
     successCount: successful.length,
-    failedCount: failed.length,
+    failedCount,
+    unknownCount: 0,
+    unattemptedCount: 0,
     skippedCount: skipped.length,
     batchId: batch.id,
+    warning: crmFailure
+      ? "ارسال ثبت شد، اما ثبت پیگیری CRM برای بخشی از پیام‌ها نیازمند بررسی است."
+      : undefined,
   });
 }

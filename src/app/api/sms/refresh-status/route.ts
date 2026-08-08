@@ -29,7 +29,10 @@ export async function POST() {
     .limit(100);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: "خواندن وضعیت پیامک‌ها انجام نشد.", code: "SMS-STATUS-READ" },
+      { status: 500 },
+    );
   }
 
   const rows = (data ?? []) as MessageRow[];
@@ -101,7 +104,7 @@ export async function POST() {
     return NextResponse.json(
       {
         error: "بخشی از وضعیت‌ها دریافت شد، اما ثبت کامل انجام نشد.",
-        details: updateErrors.slice(0, 3),
+        code: "SMS-STATUS-SAVE",
       },
       { status: 500 },
     );

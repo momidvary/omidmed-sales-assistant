@@ -12,6 +12,16 @@ export type WhatsAppProviderResult = {
   accepted: true;
 };
 
+export type WhatsAppTemplate = {
+  id: string;
+  name: string;
+  status: string;
+  language: string;
+  category: string;
+  components: unknown[];
+  variableCount: number;
+};
+
 export class WhatsAppCloudError extends Error {
   constructor(
     message: string,
@@ -179,6 +189,90 @@ function parseProviderError(value: unknown) {
         : undefined,
     message: typeof message === "string" ? message : undefined,
   };
+}
+
+function countTemplateVariables(components: unknown[]) {
+  const matches = JSON.stringify(components).match(/\{\{\s*\d+\s*\}\}/g) ?? [];
+  return new Set(matches.map((match) => match.replace(/\s/g, ""))).size;
+}
+
+export function parseWhatsAppTemplates(value: unknown): WhatsAppTemplate[] {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { data?: unknown }).data)) {
+    throw new WhatsAppCloudError("پاسخ فهرست Templateهای Meta معتبر نیست.");
+  }
+  return ((value as { data: unknown[] }).data)
+    .map((item): WhatsAppTemplate | null => {
+      if (!item || typeof item !== "object") return null;
+      const row = item as Record<string, unknown>;
+      const components = Array.isArray(row.components) ? row.components : [];
+      if (
+        typeof row.id !== "string" ||
+        typeof row.name !== "string" ||
+        typeof row.status !== "string" ||
+        typeof row.language !== "string" ||
+        typeof row.category !== "string" ||
+        !validateTemplateName(row.name)
+      ) {
+        return null;
+      }
+      return {
+        id: row.id.slice(0, 512),
+        name: row.name,
+        status: row.status.slice(0, 64).toUpperCase(),
+        language: row.language.slice(0, 32),
+        category: row.category.slice(0, 64).toUpperCase(),
+        components,
+        variableCount: Math.min(20, countTemplateVariables(components)),
+      };
+    })
+    .filter((item): item is WhatsAppTemplate => item !== null);
+}
+
+export async function fetchWhatsAppTemplates(input: {
+  config: WhatsAppCloudConfig;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}) {
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const templates: WhatsAppTemplate[] = [];
+  let after: string | null = null;
+
+  for (let page = 0; page < 20; page += 1) {
+    const url = new URL(
+      `https://graph.facebook.com/${encodeURIComponent(input.config.graphApiVersion)}/${encodeURIComponent(input.config.businessAccountId)}/message_templates`,
+    );
+    url.searchParams.set("fields", "id,name,status,language,category,components");
+    url.searchParams.set("limit", "100");
+    if (after) url.searchParams.set("after", after);
+
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        headers: { Authorization: `Bearer ${input.config.token}` },
+        signal: AbortSignal.timeout(input.timeoutMs ?? 15_000),
+        cache: "no-store",
+      });
+    } catch {
+      throw new WhatsAppCloudError("ارتباط با فهرست Templateهای Meta برقرار نشد.");
+    }
+    const data = (await response.json().catch(() => ({}))) as {
+      data?: unknown[];
+      paging?: { cursors?: { after?: unknown }; next?: unknown };
+    };
+    if (!response.ok) {
+      const parsed = parseProviderError(data);
+      throw new WhatsAppCloudError(
+        "همگام‌سازی Templateهای Meta انجام نشد.",
+        parsed.providerCode,
+        response.status,
+      );
+    }
+    templates.push(...parseWhatsAppTemplates(data));
+    const nextAfter = data.paging?.cursors?.after;
+    if (!data.paging?.next || typeof nextAfter !== "string" || !nextAfter) break;
+    after = nextAfter.slice(0, 2000);
+  }
+  return templates;
 }
 
 export async function sendWhatsAppMessage(input: {

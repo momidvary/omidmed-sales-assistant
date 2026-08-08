@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { AIInvoiceExtraction } from "@/lib/accounting/invoice-ai";
+import { validateMedicalDocument } from "@/lib/uploads/medical-document";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const allowedTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
 const maxAnalysisBytes = 4 * 1024 * 1024;
 
 const nullableString = { type: ["string", "null"] } as const;
@@ -126,11 +126,14 @@ export async function POST(request: Request) {
     if (!(file instanceof File) || file.size === 0) {
       return NextResponse.json({ error: "عکس یا PDF فاکتور را انتخاب کن." }, { status: 400 });
     }
-    if (!allowedTypes.has(file.type)) {
-      return NextResponse.json({ error: "برای تحلیل هوشمند فقط JPG، PNG یا PDF قابل قبول است." }, { status: 400 });
-    }
-    if (file.size > maxAnalysisBytes) {
-      return NextResponse.json({ error: "نسخه ارسالی برای تحلیل باید کمتر از ۴ مگابایت باشد. عکس‌ها در مرورگر خودکار کوچک می‌شوند؛ PDF بزرگ را فشرده کن." }, { status: 413 });
+    let validatedFile;
+    try {
+      validatedFile = await validateMedicalDocument(file, maxAnalysisBytes);
+    } catch {
+      return NextResponse.json(
+        { error: "فایل باید یک JPG، PNG یا PDF واقعی و کمتر از ۴ مگابایت باشد." },
+        { status: 400 },
+      );
     }
 
     const [supplierResult, materialResult] = await Promise.all([
@@ -144,7 +147,7 @@ export async function POST(request: Request) {
     const supplierNames = (supplierResult.data ?? []).map((item) => item.name);
     const materials = (materialResult.data ?? []).map((item) => ({ name: item.name, unit: item.unit }));
     const bytes = Buffer.from(await file.arrayBuffer());
-    const dataUrl = `data:${file.type};base64,${bytes.toString("base64")}`;
+    const dataUrl = `data:${validatedFile.mimeType};base64,${bytes.toString("base64")}`;
 
     const prompt = `این فایل یک فاکتور خرید، پیش‌فاکتور یا رسید فارسی مربوط به کارگاه امیدمِد است. اطلاعات را دقیق استخراج کن.
 
@@ -168,7 +171,7 @@ ${JSON.stringify(supplierNames)}
 ${JSON.stringify(materials)}
 `;
 
-    const content = file.type === "application/pdf"
+    const content = validatedFile.mimeType === "application/pdf"
       ? [
           { type: "input_file", filename: file.name.slice(0, 180), file_data: dataUrl, detail: "high" },
           { type: "input_text", text: prompt },
@@ -204,12 +207,15 @@ ${JSON.stringify(materials)}
     const data = (await response.json()) as OpenAIResponse;
     if (!response.ok) {
       const raw = data.error?.message ?? "خطای نامشخص";
-      console.error("Invoice extraction OpenAI error:", response.status, raw);
+      console.error("Invoice extraction provider request failed", { status: response.status });
       let message = "تحلیل هوشمند فاکتور انجام نشد.";
       if (response.status === 401) message = "کلید OpenAI معتبر نیست.";
       if (response.status === 429) message = "اعتبار API کافی نیست یا محدودیت درخواست فعال شده است.";
       if (response.status === 400 && /model/i.test(raw)) message = "مدل تحلیل فاکتور در حساب API فعال نیست. OPENAI_INVOICE_MODEL را بررسی کن.";
-      return NextResponse.json({ error: message }, { status: 502 });
+      return NextResponse.json(
+        { error: `${message} شناسه خطا: INVOICE-AI-PROVIDER` },
+        { status: 502 },
+      );
     }
 
     const text = outputText(data);
@@ -219,15 +225,19 @@ ${JSON.stringify(materials)}
     try {
       extraction = JSON.parse(text) as AIInvoiceExtraction;
     } catch {
-      console.error("Invalid structured invoice output:", text.slice(0, 500));
-      return NextResponse.json({ error: "پاسخ مدل ساختار معتبر نداشت؛ دوباره تلاش کن." }, { status: 502 });
+      console.error("Invoice extraction returned invalid structured output");
+      return NextResponse.json(
+        { error: "پاسخ مدل ساختار معتبر نداشت. شناسه خطا: INVOICE-AI-OUTPUT" },
+        { status: 502 },
+      );
     }
 
     return NextResponse.json({ extraction, model });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("Invoice extraction route error:", message);
+    console.error("Invoice extraction route failed", {
+      type: error instanceof Error ? error.name : "UnknownError",
+    });
     const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    return NextResponse.json({ error: timedOut ? "تحلیل فاکتور بیش از حد طول کشید؛ دوباره تلاش کن." : "در آماده‌سازی تحلیل فاکتور خطایی رخ داد." }, { status: 500 });
+    return NextResponse.json({ error: timedOut ? "تحلیل فاکتور بیش از حد طول کشید؛ دوباره تلاش کن." : "در آماده‌سازی تحلیل فاکتور خطایی رخ داد. شناسه خطا: INVOICE-AI-RUNTIME" }, { status: 500 });
   }
 }

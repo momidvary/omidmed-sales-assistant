@@ -4,6 +4,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { safeOriginalFilename, validateMedicalDocument } from "@/lib/uploads/medical-document";
 import styles from "./customer.module.css";
 
 export type CustomerFileRecord = {
@@ -26,7 +27,6 @@ const fileTypeLabels: Record<CustomerFileRecord["file_type"], string> = {
 };
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const ALLOWED_TYPES = ["image/png", "image/jpeg", "application/pdf"];
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} بایت`;
@@ -40,14 +40,6 @@ function formatDateTime(value: string) {
     timeStyle: "short",
     timeZone: "Asia/Tehran",
   }).format(new Date(value));
-}
-
-function getFileExtension(file: File) {
-  const fromName = file.name.split(".").pop()?.toLowerCase();
-  if (fromName && /^[a-z0-9]{2,5}$/.test(fromName)) return fromName;
-  if (file.type === "image/png") return "png";
-  if (file.type === "image/jpeg") return "jpg";
-  return "pdf";
 }
 
 export default function CustomerFilesManager({
@@ -105,13 +97,11 @@ export default function CustomerFilesManager({
       return;
     }
 
-    if (!ALLOWED_TYPES.includes(selectedFile.type)) {
-      setError("فقط فایل PNG، JPG یا PDF قابل بارگذاری است.");
-      return;
-    }
-
-    if (selectedFile.size > MAX_FILE_SIZE) {
-      setError("حجم فایل باید حداکثر ۱۰ مگابایت باشد.");
+    let validated;
+    try {
+      validated = await validateMedicalDocument(selectedFile, MAX_FILE_SIZE);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "فایل معتبر نیست.");
       return;
     }
 
@@ -126,19 +116,18 @@ export default function CustomerFilesManager({
       return;
     }
 
-    const extension = getFileExtension(selectedFile);
-    const storagePath = `${user.id}/${customerId}/${crypto.randomUUID()}.${extension}`;
+    const storagePath = `${user.id}/${customerId}/${crypto.randomUUID()}.${validated.extension}`;
 
     const { error: uploadError } = await supabase.storage
       .from("customer-files")
       .upload(storagePath, selectedFile, {
         cacheControl: "3600",
-        contentType: selectedFile.type,
+        contentType: validated.mimeType,
         upsert: false,
       });
 
     if (uploadError) {
-      setError(`بارگذاری فایل انجام نشد: ${uploadError.message}`);
+      setError("بارگذاری فایل انجام نشد. شناسه خطا: CUSTOMER-FILE-UPLOAD");
       setIsUploading(false);
       return;
     }
@@ -154,8 +143,8 @@ export default function CustomerFilesManager({
             ? invoiceNumber.trim()
             : null,
         storage_path: storagePath,
-        original_name: selectedFile.name,
-        mime_type: selectedFile.type,
+        original_name: safeOriginalFilename(selectedFile.name),
+        mime_type: validated.mimeType,
         size_bytes: selectedFile.size,
       })
       .select(
@@ -165,7 +154,7 @@ export default function CustomerFilesManager({
 
     if (insertError || !insertedFile) {
       await supabase.storage.from("customer-files").remove([storagePath]);
-      setError(`ثبت مشخصات فایل انجام نشد: ${insertError?.message ?? "خطای نامشخص"}`);
+      setError("ثبت مشخصات فایل انجام نشد. شناسه خطا: CUSTOMER-FILE-SAVE");
       setIsUploading(false);
       return;
     }

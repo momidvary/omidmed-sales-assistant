@@ -10,6 +10,7 @@ import {
 } from "@/lib/accounting/constants";
 import {
   cleanText,
+  currentJalaliMonthRange,
   formatDate,
   formatDecimal,
   formatMoney,
@@ -90,7 +91,7 @@ export default async function MaterialsPage({ searchParams }: { searchParams: Pr
   ]);
   const rows = (data ?? []) as MaterialRow[];
   const staleDays = Number(settings?.stale_price_days ?? 30);
-  const now = Date.now();
+  const now = currentJalaliMonthRange().generatedAtMs;
   const staleCount = rows.filter((row) => {
     const date = row.replacement_price_at || row.latest_purchase_date;
     if (!date || !Number(row.replacement_unit_cost ?? 0)) return true;
@@ -102,7 +103,7 @@ export default async function MaterialsPage({ searchParams }: { searchParams: Pr
   return (
     <AppShell active="accounting" title="مواد اولیه و قیمت خرید" subtitle="آخرین خرید، میانگین موزون و هزینه جایگزینی امروز را برای هر ماده نگه دار.">
       <AccountingNav active="materials" />
-      {error ? <div className={styles.alert}>خواندن مواد با خطا روبه‌رو شد: {error.message}</div> : null}
+      {error ? <div className={styles.alert}>خواندن مواد انجام نشد. شناسه خطا: MATERIALS_READ_FAILED</div> : null}
       {message ? <div className={styles.alert}>{message}</div> : null}
       {params.saved ? <div className={styles.success}>اطلاعات با موفقیت ذخیره شد.</div> : null}
       {staleCount ? <div className={styles.warning}>{staleCount.toLocaleString("fa-IR")} ماده قیمت جایگزینی معتبر ندارند یا قیمت آن‌ها قدیمی است.</div> : null}

@@ -291,7 +291,9 @@ ${JSON.stringify(payload)}`;
           warning = "هوش مصنوعی پاسخ نداد؛ پیشنهادهای مطمئن داخلی برنامه نمایش داده شده‌اند.";
         }
       } catch (error) {
-        console.error("Expense classification AI fallback:", error);
+        console.error("Expense classification AI fallback used", {
+          type: error instanceof Error ? error.name : "UnknownError",
+        });
         warning = "تحلیل هوش مصنوعی کامل نشد؛ پیشنهادهای داخلی برنامه قابل استفاده‌اند.";
       }
     } else if (!apiKey) {
@@ -315,8 +317,9 @@ ${JSON.stringify(payload)}`;
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "خطای ناشناخته";
-    console.error("Expense classification route error:", message);
-    return NextResponse.json({ error: "تحلیل هزینه‌ها انجام نشد. دوباره تلاش کن." }, { status: 500 });
+    console.error("Expense classification route failed", {
+      type: error instanceof Error ? error.name : "UnknownError",
+    });
+    return NextResponse.json({ error: "تحلیل هزینه‌ها انجام نشد. شناسه خطا: EXPENSE-CLASSIFY" }, { status: 500 });
   }
 }

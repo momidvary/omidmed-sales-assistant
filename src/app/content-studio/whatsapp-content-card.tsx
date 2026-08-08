@@ -31,6 +31,16 @@ type HistoryItem = {
   provider_result_unknown_at: string | null;
 };
 
+type TemplateOption = {
+  id: string;
+  name: string;
+  status: string;
+  language: string;
+  category: string;
+  variable_count: number;
+  last_synced_at: string;
+};
+
 type Payload = {
   content_type: string;
   whatsapp_short_text: string;
@@ -60,6 +70,7 @@ export default function WhatsAppContentCard({
   customers,
   history,
   readiness,
+  templates: initialTemplates,
 }: {
   itemId: string;
   imageUrl: string | null;
@@ -67,6 +78,7 @@ export default function WhatsAppContentCard({
   customers: CustomerOption[];
   history: HistoryItem[];
   readiness: WhatsAppReadiness;
+  templates: TemplateOption[];
 }) {
   const [variant, setVariant] = useState<"short" | "long" | "status">(
     payload.content_type === "status" ? "status" : "short",
@@ -78,21 +90,25 @@ export default function WhatsAppContentCard({
   });
   const [customerId, setCustomerId] = useState("");
   const [messageType, setMessageType] = useState<"text" | "image" | "template">("text");
-  const [templateName, setTemplateName] = useState(payload.suggested_template_name);
-  const [templateVariables, setTemplateVariables] = useState(payload.template_variables.join("\n"));
-  const [templateApproved, setTemplateApproved] = useState(false);
+  const [templates, setTemplates] = useState(initialTemplates);
+  const [templateKey, setTemplateKey] = useState("");
+  const [templateVariables, setTemplateVariables] = useState("");
   const [windowConfirmed, setWindowConfirmed] = useState(false);
   const [finalConfirmed, setFinalConfirmed] = useState(false);
   const [consentSource, setConsentSource] = useState("");
   const [consentOverride, setConsentOverride] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState("");
+  const [dirty, setDirty] = useState(false);
   const requestIdRef = useRef<string | null>(null);
 
   const selected = customers.find((customer) => customer.id === customerId);
   const consentStatus = consentOverride ?? selected?.whatsapp_consent_status ?? "unknown";
   const normalized = selected?.phone ? normalizeIranianMobile(selected.phone) : null;
   const selectedText = texts[variant];
+  const selectedTemplate = templates.find(
+    (template) => `${template.name}|${template.language}` === templateKey,
+  );
   const statusOnly = payload.content_type === "status";
   const manualUrl = useMemo(() => {
     if (!normalized || consentStatus !== "opted_in" || statusOnly) return null;
@@ -104,6 +120,8 @@ export default function WhatsAppContentCard({
       normalized &&
       consentStatus === "opted_in" &&
       finalConfirmed &&
+      (messageType !== "template" || selectedTemplate) &&
+      (messageType !== "image" || imageUrl) &&
       !statusOnly,
   );
 
@@ -144,6 +162,57 @@ export default function WhatsAppContentCard({
     }
   }
 
+  async function saveContent() {
+    if (pending) return;
+    setPending(true);
+    setResult("");
+    try {
+      const channelPayload = {
+        ...payload,
+        whatsapp_short_text: texts.short.trim(),
+        whatsapp_long_text: texts.long.trim(),
+        whatsapp_status_text: texts.status.trim(),
+      };
+      const response = await fetch(`/api/content-studio/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caption: texts.long,
+          finalText: selectedText,
+          channelPayload,
+          changeKind: "edit",
+        }),
+      });
+      const data = (await response.json()) as { ok?: boolean; version?: number; message?: string };
+      if (!response.ok || !data.ok) throw new Error(data.message);
+      setDirty(false);
+      setResult(`نسخه ${Number(data.version).toLocaleString("fa-IR")} ذخیره شد.`);
+    } catch {
+      setResult("ذخیره نسخه محتوا انجام نشد؛ دوباره تلاش کنید.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function syncTemplates() {
+    if (pending) return;
+    setPending(true);
+    setResult("");
+    try {
+      const syncResponse = await fetch("/api/whatsapp/templates", { method: "POST" });
+      if (!syncResponse.ok) throw new Error();
+      const listResponse = await fetch("/api/whatsapp/templates", { cache: "no-store" });
+      const data = (await listResponse.json()) as { ok?: boolean; templates?: TemplateOption[] };
+      if (!listResponse.ok || !data.ok) throw new Error();
+      setTemplates(data.templates ?? []);
+      setResult("فهرست Templateهای Meta به‌روز شد.");
+    } catch {
+      setResult("همگام‌سازی Templateهای Meta انجام نشد؛ تنظیمات سرور را بررسی کنید.");
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function send() {
     if (pending || statusOnly) return;
     const clientRequestId = requestIdRef.current ?? crypto.randomUUID();
@@ -163,10 +232,10 @@ export default function WhatsAppContentCard({
           messageText: selectedText,
           imageUrl,
           conversationWindowConfirmed: windowConfirmed,
-          templateName,
+          templateName: selectedTemplate?.name ?? "",
           templateVariables: templateVariables.split("\n").map((item) => item.trim()).filter(Boolean),
-          templateApprovedConfirmed: templateApproved,
-          templateLanguage: "fa",
+          templateApprovedConfirmed: Boolean(selectedTemplate),
+          templateLanguage: selectedTemplate?.language ?? "fa",
         }),
       });
       const data = (await response.json()) as {
@@ -205,13 +274,17 @@ export default function WhatsAppContentCard({
         aria-label="متن قابل ویرایش واتساپ"
         maxLength={variant === "long" ? 4000 : 1000}
         value={selectedText}
-        onChange={(event) => setTexts((current) => ({ ...current, [variant]: event.target.value }))}
+        onChange={(event) => {
+          setTexts((current) => ({ ...current, [variant]: event.target.value }));
+          setDirty(true);
+        }}
       />
       <div className={styles.textTools}>
         <span>{selectedText.length.toLocaleString("fa-IR")} نویسه</span>
-        <CopyButton text={texts.short} label="کپی متن کوتاه" className={styles.copyButton} />
-        <CopyButton text={texts.long} label="کپی متن کامل" className={styles.copyButton} />
-        <CopyButton text={texts.status} label="کپی استاتوس" className={styles.copyButton} />
+        <button type="button" disabled={pending || !dirty} onClick={saveContent}>ذخیره و ثبت نسخه</button>
+        <CopyButton itemId={itemId} text={texts.short} label="کپی متن کوتاه" className={styles.copyButton} />
+        <CopyButton itemId={itemId} text={texts.long} label="کپی متن کامل" className={styles.copyButton} />
+        <CopyButton itemId={itemId} text={texts.status} label="کپی استاتوس" className={styles.copyButton} />
         {imageUrl ? <button type="button" onClick={downloadImage}>دانلود تصویر</button> : null}
       </div>
       <p className={styles.compliance}>{payload.compliance_note}</p>
@@ -280,10 +353,26 @@ export default function WhatsAppContentCard({
             </label>
             {messageType === "template" ? (
               <div className={styles.templateFields}>
-                <input dir="ltr" value={templateName} onChange={(event) => setTemplateName(event.target.value)} placeholder="approved_template_name" />
+                <label>
+                  Template تأییدشده Meta
+                  <select value={templateKey} onChange={(event) => {
+                    setTemplateKey(event.target.value);
+                    const template = templates.find((item) => `${item.name}|${item.language}` === event.target.value);
+                    setTemplateVariables(
+                      Array.from({ length: template?.variable_count ?? 0 }, (_, index) => `مقدار ${index + 1}`).join("\n"),
+                    );
+                  }}>
+                    <option value="">انتخاب از فهرست همگام‌شده</option>
+                    {templates.map((template) => (
+                      <option key={template.id} value={`${template.name}|${template.language}`}>
+                        {template.name} — {template.language} — {template.category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <textarea value={templateVariables} onChange={(event) => setTemplateVariables(event.target.value)} placeholder="هر متغیر در یک خط" />
-                <label><input type="checkbox" checked={templateApproved} onChange={(event) => setTemplateApproved(event.target.checked)} /> این Template قبلاً در Meta تأیید شده است.</label>
-                <small>نام و متغیر پیشنهادی AI فقط پیش‌نویس‌اند و تأیید Meta محسوب نمی‌شوند.</small>
+                <button type="button" disabled={pending || !readiness.cloudApiConfigured} onClick={syncTemplates}>همگام‌سازی از Meta</button>
+                <small>فقط Templateهای APPROVED دریافت‌شده مستقیم از Meta قابل ارسال‌اند؛ نام حدسی پذیرفته نمی‌شود.</small>
               </div>
             ) : (
               <label className={styles.checkRow}><input type="checkbox" checked={windowConfirmed} onChange={(event) => setWindowConfirmed(event.target.checked)} /> مشتری در ۲۴ ساعت گذشته گفتگو را آغاز کرده و پنجره مکالمه باز است.</label>

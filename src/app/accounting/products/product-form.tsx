@@ -90,7 +90,7 @@ export default function ProductForm({ materials }: { materials: Material[] }) {
 
     if (error) {
       setBusy(false);
-      return setMessage(`ثبت محصول انجام نشد: ${error.message}`);
+      return setMessage("ثبت محصول انجام نشد. شناسه خطا: ACCOUNTING-PRODUCT-SAVE");
     }
     form.reset();
     setComponents([emptyLine(materials)]);
