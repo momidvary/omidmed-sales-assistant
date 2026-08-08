@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { AIInvoiceExtraction } from "@/lib/accounting/invoice-ai";
 import { validateMedicalDocument } from "@/lib/uploads/medical-document";
+import {
+  AiConfigError,
+  aiConfigErrorStatus,
+  providerErrorMessage,
+  resolveAiConfig,
+} from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -116,10 +122,20 @@ export async function POST(request: Request) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "برای تحلیل فاکتور دوباره وارد حساب شو." }, { status: 401 });
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "کلید OpenAI تنظیم نشده است. پس از خرید اعتبار، OPENAI_API_KEY را در محیط برنامه قرار بده." }, { status: 503 });
+    let apiKey: string;
+    let model: string;
+    try {
+      ({ apiKey, model } = resolveAiConfig("invoice_extract"));
+    } catch (error) {
+      if (error instanceof AiConfigError) {
+        return NextResponse.json(
+          { error: error.userMessage, code: error.code },
+          { status: aiConfigErrorStatus(error) },
+        );
+      }
+      throw error;
     }
+
 
     const formData = await request.formData();
     const file = formData.get("file");
@@ -181,7 +197,6 @@ ${JSON.stringify(materials)}
           { type: "input_text", text: prompt },
         ];
 
-    const model = process.env.OPENAI_INVOICE_MODEL || process.env.OPENAI_MODEL || "gpt-5.6-terra";
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -206,12 +221,8 @@ ${JSON.stringify(materials)}
 
     const data = (await response.json()) as OpenAIResponse;
     if (!response.ok) {
-      const raw = data.error?.message ?? "خطای نامشخص";
       console.error("Invoice extraction provider request failed", { status: response.status });
-      let message = "تحلیل هوشمند فاکتور انجام نشد.";
-      if (response.status === 401) message = "کلید OpenAI معتبر نیست.";
-      if (response.status === 429) message = "اعتبار API کافی نیست یا محدودیت درخواست فعال شده است.";
-      if (response.status === 400 && /model/i.test(raw)) message = "مدل تحلیل فاکتور در حساب API فعال نیست. OPENAI_INVOICE_MODEL را بررسی کن.";
+      const message = providerErrorMessage(response.status);
       return NextResponse.json(
         { error: `${message} شناسه خطا: INVOICE-AI-PROVIDER` },
         { status: 502 },

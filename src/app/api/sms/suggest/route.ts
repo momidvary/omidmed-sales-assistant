@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import {
+  AiConfigError,
+  aiConfigErrorStatus,
+  providerErrorMessage,
+  resolveAiConfig,
+} from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -459,17 +465,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    const model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6";
-
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            "کلید OpenAI تنظیم نشده است. مقدار OPENAI_API_KEY را در Environment Variables قرار بده.",
-        },
-        { status: 503 },
-      );
+    let apiKey: string;
+    let model: string;
+    try {
+      ({ apiKey, model } = resolveAiConfig("sms_suggest"));
+    } catch (error) {
+      if (error instanceof AiConfigError) {
+        return NextResponse.json(
+          { error: error.userMessage, code: error.code },
+          { status: aiConfigErrorStatus(error) },
+        );
+      }
+      throw error;
     }
 
     let businessContext: unknown;
@@ -522,18 +529,7 @@ export async function POST(request: Request) {
     const data = (await response.json()) as OpenAIResponse;
 
     if (!response.ok) {
-      const rawMessage =
-        data.error?.message ?? "خطای نامشخص از سرویس هوش مصنوعی";
-      let userMessage = "دریافت پیشنهاد پیامک از هوش مصنوعی انجام نشد.";
-
-      if (response.status === 401) {
-        userMessage = "کلید OpenAI معتبر نیست؛ OPENAI_API_KEY را بررسی کن.";
-      } else if (response.status === 429) {
-        userMessage = "اعتبار API کافی نیست یا تعداد درخواست‌ها زیاد شده است.";
-      } else if (response.status === 400 && /model/i.test(rawMessage)) {
-        userMessage =
-          "مدل تنظیم‌شده برای این قابلیت مناسب نیست؛ مقدار OPENAI_MODEL را بررسی کن.";
-      }
+      const userMessage = providerErrorMessage(response.status);
 
       console.error("AI SMS suggestion request failed", { status: response.status });
       return NextResponse.json(

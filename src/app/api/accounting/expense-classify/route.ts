@@ -9,6 +9,7 @@ import {
 import { groupExpenseRows } from "@/lib/accounting/expense-groups";
 import { allowedCostBehaviors, allowedExpenseCategories } from "@/lib/accounting/constants";
 import { createClient } from "@/lib/supabase/server";
+import { AiConfigError, resolveAiConfig } from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -177,7 +178,20 @@ export async function POST() {
       fallbacks.set(group.key, fallback);
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    // This route always has a deterministic rule-based result to fall back on,
+    // so a missing/invalid AI configuration downgrades to a warning instead of
+    // failing the request.
+    let aiConfig: { apiKey: string; model: string } | null = null;
+    let configWarning: string | null = null;
+    try {
+      aiConfig = resolveAiConfig("expense_classify");
+    } catch (error) {
+      if (error instanceof AiConfigError) {
+        configWarning = error.userMessage;
+      } else {
+        throw error;
+      }
+    }
     let model: string | null = null;
     let usedAi = false;
     let suggestions = [...fallbacks.values()];
@@ -190,8 +204,8 @@ export async function POST() {
       })
       .slice(0, 80);
 
-    if (apiKey && groupsNeedingAi.length) {
-      model = process.env.OPENAI_MODEL || "gpt-5.6-luna";
+    if (aiConfig && groupsNeedingAi.length) {
+      model = aiConfig.model;
       const payload = groupsNeedingAi.map((group) => ({
         key: group.key,
         description: group.label,
@@ -234,7 +248,7 @@ ${JSON.stringify(payload)}`;
       try {
         const response = await fetch("https://api.openai.com/v1/responses", {
           method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             model,
             reasoning: { effort: "low" },
@@ -296,8 +310,10 @@ ${JSON.stringify(payload)}`;
         });
         warning = "تحلیل هوش مصنوعی کامل نشد؛ پیشنهادهای داخلی برنامه قابل استفاده‌اند.";
       }
-    } else if (!apiKey) {
-      warning = "کلید OpenAI تنظیم نشده؛ پیشنهادهای داخلی برنامه نمایش داده شده‌اند.";
+    } else if (!aiConfig) {
+      warning =
+        configWarning ??
+        "سرویس هوش مصنوعی تنظیم نشده؛ پیشنهادهای داخلی برنامه نمایش داده شده‌اند.";
     }
 
     const suggestionMap = new Map(suggestions.map((item) => [item.key, item]));

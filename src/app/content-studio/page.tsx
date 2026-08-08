@@ -48,6 +48,7 @@ import CopyButton from "./copy-button";
 import styles from "./content-studio.module.css";
 import WhatsAppContentCard from "./whatsapp-content-card";
 import ContentRevisionEditor from "./content-revision-editor";
+import { resolveAiConfig, resolveImageModel } from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -535,14 +536,11 @@ async function generateContent(formData: FormData) {
     brand,
   });
 
-  const model =
-    process.env.OPENAI_CONTENT_MODEL?.trim() ||
-    process.env.OPENAI_MODEL?.trim() ||
-    "gpt-5.2";
+  const { apiKey: contentApiKey, model } = resolveAiConfig("content");
   let raw: string;
   try {
     raw = await generateStructuredContent({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: contentApiKey,
       model,
       prompt:
         channel === "whatsapp"
@@ -765,7 +763,7 @@ async function generateImage(formData: FormData) {
   const variantCount = normalizeImageVariantCount(
     process.env.OPENAI_IMAGE_VARIANT_COUNT,
   );
-  const imageModel = process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-1";
+  const imageModel = resolveImageModel();
   const response = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

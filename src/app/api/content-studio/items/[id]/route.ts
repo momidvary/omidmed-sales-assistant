@@ -6,6 +6,11 @@ import {
   type ProductGrounding,
 } from "@/lib/content-studio/quality";
 import { createClient } from "@/lib/supabase/server";
+import {
+  AiConfigError,
+  aiConfigErrorStatus,
+  resolveAiConfig,
+} from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 
@@ -150,10 +155,24 @@ export async function POST(
         required: ["text"],
         properties: { text: { type: "string" } },
       };
+
+  let contentAiConfig: { apiKey: string; model: string };
+  try {
+    contentAiConfig = resolveAiConfig("content");
+  } catch (error) {
+    if (error instanceof AiConfigError) {
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
+        { status: aiConfigErrorStatus(error) },
+      );
+    }
+    throw error;
+  }
+
   try {
     const output = await generateStructuredContent({
-      apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_CONTENT_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "gpt-5.2",
+      apiKey: contentAiConfig.apiKey,
+      model: contentAiConfig.model,
       prompt,
       schemaName: variants ? "omidmed_content_variants" : "omidmed_content_refinement",
       schema,

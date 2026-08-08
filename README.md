@@ -39,14 +39,38 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.2
-OPENAI_CONTENT_MODEL=gpt-5.2
-OPENAI_IMAGE_MODEL=gpt-image-1
+OPENAI_MODEL=
 OPENAI_IMAGE_QUALITY=medium
 OPENAI_IMAGE_VARIANT_COUNT=3
 ```
 
 فایل `.env.local` نباید وارد GitHub شود.
+
+### سیاست تنظیم مدل هوش مصنوعی
+
+برنامه هیچ نام مدلی را حدس نمی‌زند. نام مدل فقط از Environment خوانده می‌شود و اگر
+تنظیم نشده باشد، به‌جای ارسال درخواست با یک مدل ساختگی، خطای پیکربندی کنترل‌شده
+(`503`) با پیام فارسی برگردانده می‌شود.
+
+| متغیر | الزام | استفاده |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | الزامی | همه قابلیت‌های هوش مصنوعی |
+| `OPENAI_MODEL` | الزامی | مدل پایه متنی برای همه قابلیت‌ها |
+| `OPENAI_ASSISTANT_MODEL` | اختیاری | فقط دستیار فروش |
+| `OPENAI_CONTENT_MODEL` | اختیاری | فقط استودیو محتوا |
+| `OPENAI_SMS_MODEL` | اختیاری | فقط پیشنهاد پیامک |
+| `OPENAI_EXPENSE_MODEL` | اختیاری | فقط دسته‌بندی هزینه |
+| `OPENAI_INVOICE_MODEL` | اختیاری | فقط خواندن فاکتور |
+| `OPENAI_IMAGE_MODEL` | اختیاری | تولید تصویر (پیش‌فرض `gpt-image-1`) |
+
+متغیرهای اختیاری اگر تنظیم نشوند به `OPENAI_MODEL` برمی‌گردند. تنها مقدار پیش‌فرض
+درون کد `gpt-image-1` است که یک مدل واقعی و منتشرشده OpenAI است.
+
+دسته‌بندی هزینه استثناست: چون همیشه یک نتیجه قطعی مبتنی بر قاعده دارد، نبودِ
+تنظیمات هوش مصنوعی باعث خطا نمی‌شود و فقط هشدار نمایش می‌دهد.
+
+خطای خام سرویس (متن OpenAI، کلید، شناسه داخلی) هرگز به UI یا log نمی‌رود؛ فقط پیام
+فارسی امن به‌همراه شناسه خطا نمایش داده می‌شود.
 
 ## دیتابیس
 
