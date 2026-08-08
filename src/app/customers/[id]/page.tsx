@@ -15,6 +15,7 @@ import CustomerFilesManager, {
 } from "./customer-files-manager";
 import JalaliDateTimeField from "./jalali-date-time-field";
 import styles from "./customer.module.css";
+import { normalizeHoloBalance } from "@/lib/finance/metrics";
 
 const numberFormatter = new Intl.NumberFormat("fa-IR");
 
@@ -603,10 +604,11 @@ export default async function CustomerPage({
         item.status === "open" || item.status === "on_hold",
     ) ?? null;
 
-  const debtAmount =
-    customer.holo_balance_status === "debtor"
-      ? numeric(customer.holo_balance_amount)
-      : 0;
+  const holoBalance = normalizeHoloBalance({
+    amount: customer.holo_balance_amount,
+    status: customer.holo_balance_status,
+  });
+  const debtAmount = holoBalance.status === "debtor" ? holoBalance.amount : 0;
 
   const topProduct =
     productSummary[0]?.product_name ??

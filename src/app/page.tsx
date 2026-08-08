@@ -11,6 +11,7 @@ import {
   type FollowupForScoring,
 } from "@/lib/sales/followup-priority";
 import styles from "./today.module.css";
+import { tehranDateKey as sharedTehranDateKey } from "@/lib/finance/metrics";
 
 const number = new Intl.NumberFormat("fa-IR");
 const DAILY_TARGET = 15;
@@ -145,12 +146,7 @@ function normalizePhoneForLink(phone: string | null) {
 }
 
 function tehranDateKey(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "Asia/Tehran",
-  }).format(date);
+  return sharedTehranDateKey(date);
 }
 
 function addTehranDaysAtTen(days: number) {

@@ -1,3 +1,11 @@
+// Shared financial helpers.
+//
+// Scope rule: a helper lives here only when real UI/API code calls it. Amounts
+// that a SQL view already derives (actual invoiced sales, purchase outstanding
+// balance, manufacturing expense scope) are deliberately NOT reimplemented in
+// TypeScript — a second copy can silently drift from the view that production
+// actually reads. Those contracts are covered by tests/financial-sql.test.ts.
+
 export type NumericValue = number | string | null | undefined;
 
 export function numeric(value: NumericValue) {
@@ -25,43 +33,6 @@ export function normalizeHoloBalance(input: {
     signedAmount:
       status === "debtor" ? amount : status === "creditor" ? -amount : 0,
   } as const;
-}
-
-export type InvoiceForSales = {
-  total_amount: NumericValue;
-  holo_is_deleted?: boolean | null;
-};
-
-export function actualInvoicedSales(invoices: InvoiceForSales[]) {
-  return invoices.reduce(
-    (total, invoice) =>
-      invoice.holo_is_deleted === true
-        ? total
-        : total + Math.max(0, numeric(invoice.total_amount)),
-    0,
-  );
-}
-
-export function purchaseBalance(input: {
-  total: NumericValue;
-  openingPaid?: NumericValue;
-  payments?: NumericValue[];
-}) {
-  const total = Math.max(0, numeric(input.total));
-  const paid = Math.min(
-    total,
-    Math.max(
-      0,
-      numeric(input.openingPaid) +
-        (input.payments ?? []).reduce<number>(
-          (sum, amount) => sum + numeric(amount),
-          0,
-        ),
-    ),
-  );
-  const outstanding = Math.max(0, total - paid);
-  const status = paid <= 0 ? "unpaid" : outstanding <= 0 ? "paid" : "partial";
-  return { total, paid, outstanding, status } as const;
 }
 
 export function payrollTotals(input: {
@@ -120,14 +91,4 @@ export function dueBucket(
   const valueKey = tehranDateKey(date);
   if (valueKey === currentKey) return "today";
   return valueKey < currentKey ? "overdue" : "future";
-}
-
-export function confirmedManufacturingExpense<T extends {
-  classification_status?: string | null;
-  expense_scope?: string | null;
-}>(expense: T) {
-  return (
-    expense.classification_status === "confirmed" &&
-    expense.expense_scope === "manufacturing"
-  );
 }

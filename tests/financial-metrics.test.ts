@@ -2,12 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  actualInvoicedSales,
-  confirmedManufacturingExpense,
   dueBucket,
   normalizeHoloBalance,
   payrollTotals,
-  purchaseBalance,
 } from "../src/lib/finance/metrics";
 
 test("customer balance uses Holoo status without summing invoice balances", () => {
@@ -25,23 +22,7 @@ test("customer balance uses Holoo status without summing invoice balances", () =
   assert.equal(normalizeHoloBalance({ amount: null, status: null }).status, "unknown");
 });
 
-test("actual sales exclude soft-deleted invoices", () => {
-  assert.equal(
-    actualInvoicedSales([
-      { total_amount: 1_000_000, holo_is_deleted: false },
-      { total_amount: 500_000, holo_is_deleted: true },
-      { total_amount: 250_000, holo_is_deleted: null },
-    ]),
-    1_250_000,
-  );
-});
 
-test("partial purchase invoices expose only their outstanding amount", () => {
-  assert.deepEqual(
-    purchaseBalance({ total: 1_000_000, openingPaid: 250_000, payments: [100_000] }),
-    { total: 1_000_000, paid: 350_000, outstanding: 650_000, status: "partial" },
-  );
-});
 
 test("advance affects paid and remaining, never labor cost", () => {
   assert.deepEqual(
@@ -72,21 +53,4 @@ test("due dates have distinct Tehran today, overdue and future buckets", () => {
   assert.equal(dueBucket("2026-08-07T23:59:00+03:30", now), "overdue");
   assert.equal(dueBucket("2026-08-09T00:01:00+03:30", now), "future");
   assert.equal(dueBucket(null, now), "unscheduled");
-});
-
-test("unconfirmed expenses never enter manufacturing overhead", () => {
-  assert.equal(
-    confirmedManufacturingExpense({
-      classification_status: "suggested",
-      expense_scope: "manufacturing",
-    }),
-    false,
-  );
-  assert.equal(
-    confirmedManufacturingExpense({
-      classification_status: "confirmed",
-      expense_scope: "manufacturing",
-    }),
-    true,
-  );
 });
