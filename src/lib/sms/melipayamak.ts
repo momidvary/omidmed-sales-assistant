@@ -85,8 +85,13 @@ export function personalizeSmsTemplate(
 }
 
 export function ensureSingleSmsOptOut(value: string) {
+  // The opt-out may already be present written with Persian (۱۱) or
+  // Arabic-Indic (١١) digits — the natural way a Persian speaker or an AI
+  // suggestion types it. Matching Latin digits alone left the original in
+  // place and appended a second one, so the message shipped with two opt-out
+  // instructions and burned an extra SMS segment.
   const withoutDuplicates = value
-    .replace(/(?:\s*لغو\s*11\s*)+/giu, " ")
+    .replace(/(?:\s*لغو\s*[1۱١][1۱١]\s*)+/giu, " ")
     .replace(/\s+/g, " ")
     .trim();
   return `${withoutDuplicates}\nلغو11`.trim();
