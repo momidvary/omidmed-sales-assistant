@@ -6,6 +6,7 @@ import {
   buildGroundedBrief,
   buildProfessionalImagePrompt,
   containsGenericOpening,
+  normalizeImageVariantCount,
   removeUnsupportedMedicalClaims,
 } from "../src/lib/content-studio/quality";
 
@@ -33,6 +34,13 @@ test("grounded brief includes verified product and minimum CRM context", () => {
   assert.match(prompt, /holoo_balance_status/);
   assert.match(prompt, /actual_invoiced_sales_toman/);
   assert.match(prompt, /مشخصات فنی نساز/);
+});
+
+test("image generation requests two to four selectable concepts", () => {
+  assert.equal(normalizeImageVariantCount(undefined), 3);
+  assert.equal(normalizeImageVariantCount("1"), 2);
+  assert.equal(normalizeImageVariantCount("12"), 4);
+  assert.equal(normalizeImageVariantCount("invalid"), 3);
 });
 
 test("unsupported medical claims are deterministically removed", () => {

@@ -43,6 +43,7 @@ OPENAI_MODEL=gpt-5.2
 OPENAI_CONTENT_MODEL=gpt-5.2
 OPENAI_IMAGE_MODEL=gpt-image-1
 OPENAI_IMAGE_QUALITY=medium
+OPENAI_IMAGE_VARIANT_COUNT=3
 ```
 
 فایل `.env.local` نباید وارد GitHub شود.

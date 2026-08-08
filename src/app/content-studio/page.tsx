@@ -23,6 +23,7 @@ import {
   CONTENT_GOALS,
   CONTENT_TYPES,
   IMAGE_PRESETS,
+  normalizeImageVariantCount,
   removeUnsupportedMedicalClaims,
   type BrandGrounding,
   type CustomerGrounding,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/content-studio/whatsapp-legacy";
 import { createClient } from "@/lib/supabase/server";
 import {
+  detectMedicalDocumentMime,
   safeOriginalFilename,
   validateMedicalDocument,
 } from "@/lib/uploads/medical-document";
@@ -52,6 +54,21 @@ export const maxDuration = 60;
 
 type ContentStatus = "draft" | "pending_review" | "approved" | "published" | "rejected";
 type ContentChannel = "instagram" | "whatsapp";
+
+type StoredImageVariant = {
+  path: string;
+  provider?: string;
+  model?: string;
+  generatedAt?: string;
+};
+
+function storedImageVariants(metadata: Record<string, unknown> | null | undefined) {
+  if (!Array.isArray(metadata?.variants)) return [];
+  return metadata.variants.filter((value): value is StoredImageVariant => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    return typeof (value as { path?: unknown }).path === "string";
+  });
+}
 
 type ContentItem = {
   id: string;
@@ -702,6 +719,11 @@ async function generateImage(formData: FormData) {
     .single();
   if (!item?.image_prompt) redirect(`/content-studio?channel=${channel}&error=image-prompt`);
 
+  const previousMetadata = (item.image_metadata ?? {}) as Record<string, unknown>;
+  const previousVariantPaths = storedImageVariants(previousMetadata)
+    .map((variant) => variant.path)
+    .filter((path) => path.startsWith(`${user.id}/`));
+
   if (item.product_id) {
     const { data: product } = await supabase
       .from("costing_products")
@@ -716,14 +738,18 @@ async function generateImage(formData: FormData) {
           image_path: product.primary_image_path,
           image_url: null,
           image_metadata: {
-            ...(item.image_metadata as Record<string, unknown> | null),
+            ...previousMetadata,
             source: "real_product",
             ai_is_actual_product: false,
+            variants: [],
           },
         })
         .eq("id", item.id)
         .eq("created_by", user.id);
       if (error) redirect(`/content-studio?channel=${channel}&error=image-database`);
+      if (previousVariantPaths.length) {
+        await supabase.storage.from("content-studio").remove(previousVariantPaths);
+      }
       revalidatePath("/content-studio");
       redirect(`/content-studio?channel=${channel}&saved=image`);
     }
@@ -736,11 +762,15 @@ async function generateImage(formData: FormData) {
     redirect(`/content-studio?channel=${channel}&error=image-config`);
   }
 
+  const variantCount = normalizeImageVariantCount(
+    process.env.OPENAI_IMAGE_VARIANT_COUNT,
+  );
+  const imageModel = process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-1";
   const response = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-1",
+      model: imageModel,
       prompt: item.image_prompt,
       size:
         (item.image_metadata as { preset?: string } | null)?.preset === "website"
@@ -753,7 +783,7 @@ async function generateImage(formData: FormData) {
             : "1024x1024",
       quality: process.env.OPENAI_IMAGE_QUALITY?.trim() || "medium",
       output_format: "png",
-      n: 1,
+      n: variantCount,
     }),
     signal: AbortSignal.timeout(55_000),
     cache: "no-store",
@@ -761,44 +791,110 @@ async function generateImage(formData: FormData) {
   const result = (await response.json().catch(() => ({}))) as {
     data?: Array<{ b64_json?: string }>;
   };
-  const base64 = result.data?.[0]?.b64_json;
-  if (!response.ok || !base64) {
+  const encodedVariants = (result.data ?? [])
+    .map((entry) => entry.b64_json)
+    .filter((value): value is string => Boolean(value))
+    .slice(0, variantCount);
+  if (!response.ok || !encodedVariants.length) {
     redirect(`/content-studio?channel=${channel}&error=image-generation`);
   }
 
   const admin = createAdminClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const path = `${user.id}/${item.id}-${crypto.randomUUID()}.png`;
-  const imageBytes = Buffer.from(base64, "base64");
-  if (!imageBytes.length || imageBytes.length > 15 * 1024 * 1024) {
-    redirect(`/content-studio?channel=${channel}&error=image-generation`);
+  const uploadedPaths: string[] = [];
+  for (const encoded of encodedVariants) {
+    const imageBytes = Buffer.from(encoded, "base64");
+    if (
+      !imageBytes.length ||
+      imageBytes.length > 15 * 1024 * 1024 ||
+      detectMedicalDocumentMime(imageBytes) !== "image/png"
+    ) {
+      if (uploadedPaths.length) {
+        await admin.storage.from("content-studio").remove(uploadedPaths);
+      }
+      redirect(`/content-studio?channel=${channel}&error=image-generation`);
+    }
+    const path = `${user.id}/${item.id}-${crypto.randomUUID()}.png`;
+    const { error: uploadError } = await admin.storage
+      .from("content-studio")
+      .upload(path, imageBytes, { contentType: "image/png", upsert: false });
+    if (uploadError) {
+      if (uploadedPaths.length) {
+        await admin.storage.from("content-studio").remove(uploadedPaths);
+      }
+      redirect(`/content-studio?channel=${channel}&error=image-upload`);
+    }
+    uploadedPaths.push(path);
   }
-  const { error: uploadError } = await admin.storage
-    .from("content-studio")
-    .upload(path, imageBytes, { contentType: "image/png", upsert: false });
-  if (uploadError) redirect(`/content-studio?channel=${channel}&error=image-upload`);
+
+  const generatedAt = new Date().toISOString();
+  const variants: StoredImageVariant[] = uploadedPaths.map((path) => ({
+    path,
+    provider: "openai",
+    model: imageModel,
+    generatedAt,
+  }));
 
   const { error: updateError } = await supabase
     .from("content_items")
     .update({
-      image_path: path,
+      image_path: uploadedPaths[0],
       image_url: null,
       image_metadata: {
-        ...(item.image_metadata as Record<string, unknown> | null),
+        ...previousMetadata,
         source: "ai_concept",
         ai_is_actual_product: false,
         provider: "openai",
-        model: process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-1",
-        generated_at: new Date().toISOString(),
+        model: imageModel,
+        generated_at: generatedAt,
+        variants,
       },
     })
     .eq("id", item.id)
     .eq("created_by", user.id);
   if (updateError) {
-    await admin.storage.from("content-studio").remove([path]);
+    await admin.storage.from("content-studio").remove(uploadedPaths);
     redirect(`/content-studio?channel=${channel}&error=image-database`);
   }
+  const replacedPaths = previousVariantPaths.filter(
+    (path) => !uploadedPaths.includes(path),
+  );
+  if (replacedPaths.length) {
+    await admin.storage.from("content-studio").remove(replacedPaths);
+  }
+  revalidatePath("/content-studio");
+  redirect(`/content-studio?channel=${channel}&saved=image`);
+}
+
+async function selectImageVariant(formData: FormData) {
+  "use server";
+
+  const { supabase, user } = await requireUser();
+  const itemId = String(formData.get("item_id") ?? "").trim();
+  const path = String(formData.get("image_path") ?? "").trim();
+  const channel = String(formData.get("channel") ?? "instagram");
+  if (!itemId || !path.startsWith(`${user.id}/`)) {
+    redirect(`/content-studio?channel=${channel}&error=image-selection`);
+  }
+  const { data: item } = await supabase
+    .from("content_items")
+    .select("id,image_metadata")
+    .eq("id", itemId)
+    .eq("created_by", user.id)
+    .maybeSingle();
+  const allowed = storedImageVariants(
+    (item?.image_metadata ?? null) as Record<string, unknown> | null,
+  ).some((variant) => variant.path === path);
+  if (!item || !allowed) {
+    redirect(`/content-studio?channel=${channel}&error=image-selection`);
+  }
+  const { error } = await supabase
+    .from("content_items")
+    .update({ image_path: path, image_url: null })
+    .eq("id", item.id)
+    .eq("created_by", user.id);
+  if (error) redirect(`/content-studio?channel=${channel}&error=image-selection`);
   revalidatePath("/content-studio");
   redirect(`/content-studio?channel=${channel}&saved=image`);
 }
@@ -998,24 +1094,28 @@ export default async function ContentStudioPage({
   }
   const readinessSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const readinessServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (whatsappSchemaReady && readinessSupabaseUrl && readinessServiceKey) {
+  const signedImageUrls = new Map<string, string>();
+  if (readinessSupabaseUrl && readinessServiceKey) {
     const readinessAdmin = createAdminClient(readinessSupabaseUrl, readinessServiceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    whatsappSchemaReady = await probeWhatsAppSchema(readinessAdmin);
-    const paths = items.map((item) => item.image_path).filter((path): path is string => Boolean(path));
+    if (whatsappSchemaReady) {
+      whatsappSchemaReady = await probeWhatsAppSchema(readinessAdmin);
+    }
+    const paths = Array.from(new Set(items.flatMap((item) => [
+      item.image_path,
+      ...storedImageVariants(item.image_metadata).map((variant) => variant.path),
+    ]).filter((path): path is string => Boolean(path))));
     if (paths.length) {
       const { data: signedFiles } = await readinessAdmin.storage
         .from("content-studio")
         .createSignedUrls(paths, 3600);
-      const signedByPath = new Map(
-        (signedFiles ?? [])
-          .filter((file) => file.signedUrl)
-          .map((file, index) => [paths[index], file.signedUrl]),
-      );
+      (signedFiles ?? []).forEach((file, index) => {
+        if (file.signedUrl && paths[index]) signedImageUrls.set(paths[index], file.signedUrl);
+      });
       items = items.map((item) => ({
         ...item,
-        image_url: (item.image_path && signedByPath.get(item.image_path)) || item.image_url,
+        image_url: (item.image_path && signedImageUrls.get(item.image_path)) || item.image_url,
       }));
     }
   }
@@ -1050,6 +1150,7 @@ export default async function ContentStudioPage({
     "image-generation": "تولید تصویر انجام نشد.",
     "image-upload": "بارگذاری تصویر در Supabase انجام نشد.",
     "image-database": "آدرس تصویر ذخیره نشد.",
+    "image-selection": "انتخاب امن تصویر انجام نشد.",
     brand: "ذخیره تنظیمات برند انجام نشد؛ ورودی‌ها را بررسی کن.",
     catalog: "ذخیره اطلاعات تأییدشده محصول انجام نشد.",
     "product-image": "تصویر واقعی محصول باید PNG یا JPEG معتبر و حداکثر ۱۵ مگابایت باشد.",
@@ -1179,6 +1280,12 @@ export default async function ContentStudioPage({
                   ? item.channel_payload
                   : decodeLegacyWhatsAppPayload(item.hashtags);
                 const instagramText = [item.caption, item.call_to_action, item.hashtags.join(" ")].filter(Boolean).join("\n\n");
+                const imageVariants = storedImageVariants(item.image_metadata)
+                  .map((variant) => ({
+                    ...variant,
+                    url: signedImageUrls.get(variant.path),
+                  }))
+                  .filter((variant): variant is StoredImageVariant & { url: string } => Boolean(variant.url));
                 return (
                   <article className={styles.card} key={item.id}>
                     <header className={styles.cardHeader}><div><small>{item.channel === "whatsapp" && whatsappPayload ? whatsappTypeLabels[whatsappPayload.content_type] : formatLabels[item.format] || item.format}</small><h3>{item.title}</h3><p>{item.topic}</p></div><span className={`${styles.status} ${styles[item.status]}`}>{statusLabels[item.status]}</span></header>
@@ -1191,6 +1298,32 @@ export default async function ContentStudioPage({
                       )}
                       {item.channel === "instagram" ? <div className={styles.copy}><strong>{item.on_image_text || "متن روی تصویر تعیین نشده"}</strong><p>{item.caption}</p>{item.call_to_action ? <b>{item.call_to_action}</b> : null}{item.hashtags.length ? <small>{item.hashtags.join(" ")}</small> : null}<ContentRevisionEditor itemId={item.id} initialText={item.final_text || item.caption} channelPayload={item.channel_payload ?? {}} /></div> : null}
                     </div>
+                    {imageVariants.length ? (
+                      <div className={styles.imageVariants}>
+                        <strong>Conceptهای خصوصی این محتوا</strong>
+                        <div>
+                          {imageVariants.map((variant, index) => (
+                            <form action={selectImageVariant} key={variant.path}>
+                              <input type="hidden" name="item_id" value={item.id} />
+                              <input type="hidden" name="channel" value={activeChannel} />
+                              <input type="hidden" name="image_path" value={variant.path} />
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={variant.url} alt={`${item.title} — concept ${index + 1}`} />
+                              <button type="submit" disabled={item.image_path === variant.path}>
+                                {item.image_path === variant.path ? "انتخاب‌شده" : `انتخاب طرح ${index + 1}`}
+                              </button>
+                            </form>
+                          ))}
+                        </div>
+                        {item.image_prompt ? (
+                          <form action={generateImage}>
+                            <input type="hidden" name="item_id" value={item.id} />
+                            <input type="hidden" name="channel" value={activeChannel} />
+                            <button type="submit">ساخت مجموعه تازه بدون نوشته فارسی</button>
+                          </form>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {item.channel === "whatsapp" && whatsappPayload ? (
                       <WhatsAppContentCard itemId={item.id} imageUrl={item.image_url} payload={whatsappPayload} customers={customers} history={history.filter((message) => message.content_item_id === item.id)} readiness={whatsappReadiness} templates={templates} />
                     ) : item.channel === "instagram" ? (

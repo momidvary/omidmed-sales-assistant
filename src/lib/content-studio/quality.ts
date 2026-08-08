@@ -52,6 +52,11 @@ export const IMAGE_PRESETS = {
   website: { label: "Website 16:9", ratio: "16:9", size: "1536x1024" },
 } as const;
 
+export function normalizeImageVariantCount(value: string | null | undefined) {
+  const parsed = Number.parseInt(value?.trim() || "3", 10);
+  return Math.min(4, Math.max(2, Number.isFinite(parsed) ? parsed : 3));
+}
+
 export type ProductGrounding = {
   name: string;
   category?: string | null;
