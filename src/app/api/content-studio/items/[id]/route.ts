@@ -163,7 +163,7 @@ export async function POST(
     if (error instanceof AiConfigError) {
       return NextResponse.json(
         { error: error.userMessage, code: error.code },
-        { status: aiConfigErrorStatus(error) },
+        { status: aiConfigErrorStatus() },
       );
     }
     throw error;

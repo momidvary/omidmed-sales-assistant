@@ -139,7 +139,7 @@ export function resolveAiConfig(
 }
 
 /** HTTP status for a configuration failure: always "server not ready". */
-export function aiConfigErrorStatus(_error: AiConfigError) {
+export function aiConfigErrorStatus(): 503 {
   return 503;
 }
 

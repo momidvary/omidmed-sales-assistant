@@ -12,11 +12,11 @@ import {
   resolveImageModel,
   resolveModel,
   resolveOpenAiKey,
-} from "../src/lib/ai/config.ts";
+} from "../src/lib/ai/config";
 import {
   ContentGenerationError,
   generateStructuredContent,
-} from "../src/lib/content-studio/openai.ts";
+} from "../src/lib/content-studio/openai";
 
 /** assert.throws() returns undefined, so capture the error explicitly. */
 function caught(fn: () => unknown) {
@@ -61,7 +61,7 @@ test("missing API key raises a controlled config error, never a fallback", () =>
   const error = caught(() => resolveOpenAiKey({ OPENAI_MODEL: "m" }));
   assert.ok(error instanceof AiConfigError);
   assert.equal(error.code, "MISSING_API_KEY");
-  assert.equal(aiConfigErrorStatus(error), 503);
+  assert.equal(aiConfigErrorStatus(), 503);
   assert.match(error.userMessage, /پیکربندی نشده/);
 });
 
