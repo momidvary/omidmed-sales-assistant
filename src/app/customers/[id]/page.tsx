@@ -458,6 +458,22 @@ async function saveFollowup(formData: FormData) {
   redirect(`/customers/${customerId}?saved=1#activity`);
 }
 
+/**
+ * Row caps for the profile panels. Named so the query and the notice shown to
+ * the user cannot drift apart: each panel warns when it returns exactly its
+ * cap, because at that point the list is almost certainly incomplete and a
+ * silently truncated history reads as a complete one.
+ */
+const PROFILE_LIMITS = {
+  followups: 40,
+  sales: 100,
+  invoices: 50,
+  products: 12,
+  sms: 30,
+  whatsapp: 30,
+  opportunities: 20,
+} as const;
+
 export default async function CustomerPage({
   params,
   searchParams,
@@ -498,7 +514,7 @@ export default async function CustomerPage({
       )
       .eq("customer_id", id)
       .order("followup_at", { ascending: false })
-      .limit(40),
+      .limit(PROFILE_LIMITS.followups),
     supabase
       .from("customer_files")
       .select(
@@ -513,7 +529,7 @@ export default async function CustomerPage({
       )
       .eq("customer_id", id)
       .order("sale_date", { ascending: false })
-      .limit(100),
+      .limit(PROFILE_LIMITS.sales),
     supabase
       .from("invoices")
       .select(
@@ -522,7 +538,7 @@ export default async function CustomerPage({
       .eq("customer_id", id)
       .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
       .order("invoice_date", { ascending: false })
-      .limit(50),
+      .limit(PROFILE_LIMITS.invoices),
     supabase
       .from("customer_product_summary")
       .select(
@@ -530,7 +546,7 @@ export default async function CustomerPage({
       )
       .eq("customer_id", id)
       .order("total_amount", { ascending: false })
-      .limit(12),
+      .limit(PROFILE_LIMITS.products),
     supabase
       .from("sms_messages")
       .select(
@@ -538,7 +554,7 @@ export default async function CustomerPage({
       )
       .eq("customer_id", id)
       .order("created_at", { ascending: false })
-      .limit(30),
+      .limit(PROFILE_LIMITS.sms),
     supabase
       .from("whatsapp_messages")
       .select(
@@ -546,7 +562,7 @@ export default async function CustomerPage({
       )
       .eq("customer_id", id)
       .order("created_at", { ascending: false })
-      .limit(30),
+      .limit(PROFILE_LIMITS.whatsapp),
     supabase
       .from("sales_opportunities")
       .select(
@@ -554,7 +570,7 @@ export default async function CustomerPage({
       )
       .eq("customer_id", id)
       .order("created_at", { ascending: false })
-      .limit(20),
+      .limit(PROFILE_LIMITS.opportunities),
   ]);
 
   const customer = customerResult.data as CustomerRow | null;
@@ -572,6 +588,16 @@ export default async function CustomerPage({
   const invoices = invoicesResult.data ?? [];
   const sales = salesResult.data ?? [];
   const productSummary = productSummaryResult.data ?? [];
+
+  // A panel that returns exactly its cap is almost certainly incomplete. Say so
+  // rather than presenting a truncated history as the customer's full record.
+  const timelineTruncated =
+    followups.length >= PROFILE_LIMITS.followups ||
+    smsMessages.length >= PROFILE_LIMITS.sms ||
+    whatsappMessages.length >= PROFILE_LIMITS.whatsapp;
+  const productsTruncated = productSummary.length >= PROFILE_LIMITS.products;
+  const opportunitiesTruncated =
+    opportunities.length >= PROFILE_LIMITS.opportunities;
   const customerFiles = customerFilesResult.data ?? [];
 
   const invoiceIds = invoices.map((invoice) => invoice.id);
@@ -1181,6 +1207,9 @@ export default async function CustomerPage({
               <h3>تایم‌لاین یکپارچه</h3>
               <p>
                 تماس‌ها، پیامک‌ها و فرصت‌های فروش
+                {timelineTruncated
+                  ? ` — فقط ${PROFILE_LIMITS.followups} پیگیری، ${PROFILE_LIMITS.sms} پیامک و ${PROFILE_LIMITS.whatsapp} پیام واتساپ اخیر نمایش داده می‌شود.`
+                  : ""}
               </p>
             </div>
           </div>
@@ -1245,6 +1274,9 @@ export default async function CustomerPage({
             <h3>محصولات و سابقه علاقه‌مندی</h3>
             <p>
               خریدهای قبلی و محصولاتی که برای فروش بعدی مناسب‌اند
+              {productsTruncated
+                ? ` — ${PROFILE_LIMITS.products} محصول پرفروش‌تر نمایش داده می‌شود.`
+                : ""}
             </p>
           </div>
         </div>
@@ -1316,6 +1348,9 @@ export default async function CustomerPage({
             <h3>قیمت‌ها و فرصت‌های فروش</h3>
             <p>
               درخواست قیمت، پیگیری‌های بعدی و نتیجه نهایی
+              {opportunitiesTruncated
+                ? ` — فقط ${PROFILE_LIMITS.opportunities} مورد اخیر نمایش داده می‌شود.`
+                : ""}
             </p>
           </div>
         </div>
@@ -1394,8 +1429,7 @@ export default async function CustomerPage({
           <div>
             <h3>فاکتورها و اقلام خریداری‌شده</h3>
             <p>
-              آخرین ۵۰ فاکتور؛ هر فاکتور را باز کن تا کالاها
-              نمایش داده شوند.
+              {`آخرین ${PROFILE_LIMITS.invoices} فاکتور؛ هر فاکتور را باز کن تا کالاها نمایش داده شوند.`}
             </p>
           </div>
         </div>
