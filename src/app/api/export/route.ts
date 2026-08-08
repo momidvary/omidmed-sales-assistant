@@ -130,17 +130,23 @@ export async function GET(request: NextRequest) {
       let allowedIds: Set<string> | null = null;
 
       if (product) {
-        const { data, error } = await supabase
-          .from("customer_product_summary")
-          .select("customer_id")
-          .ilike("product_name", `%${product.replace(/[%_]/g, "")}%`)
-          .limit(10000);
-        if (error) throw error;
-        allowedIds = new Set(
-          (data ?? []).map(
-            (item: { customer_id: string }) => item.customer_id,
-          ),
-        );
+        // Paged rather than a single large `.limit()`: PostgREST clamps an
+        // oversized request to its max-rows setting without raising an error,
+        // which would quietly drop customers from an exported campaign list.
+        const pageSize = 1000;
+        allowedIds = new Set<string>();
+        for (let start = 0; ; start += pageSize) {
+          const { data, error } = await supabase
+            .from("customer_product_summary")
+            .select("customer_id")
+            .ilike("product_name", `%${product.replace(/[%_]/g, "")}%`)
+            .order("customer_id")
+            .range(start, start + pageSize - 1);
+          if (error) throw error;
+          const page = (data ?? []) as Array<{ customer_id: string }>;
+          for (const item of page) allowedIds.add(item.customer_id);
+          if (page.length < pageSize) break;
+        }
       }
 
       const filtered = customers.filter((customer) => {

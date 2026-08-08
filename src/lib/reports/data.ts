@@ -173,17 +173,28 @@ export async function fetchInvoiceItems(
 
   for (let index = 0; index < invoiceIds.length; index += chunkSize) {
     const chunk = invoiceIds.slice(index, index + chunkSize);
-    const { data, error } = await supabase
-      .from("invoice_items")
-      .select("id,invoice_id,product_name,quantity,unit_price,line_total")
-      .in("invoice_id", chunk)
-      .limit(10000);
 
-    if (error) {
-      if (error.code === "42P01") return [];
-      throw error;
+    // Page through each chunk like every other reader in this file. The
+    // previous `.limit(10000)` was a single unpaged request, and PostgREST
+    // silently clamps a request above its max-rows setting instead of
+    // erroring — so an oversized chunk would drop invoice lines from sales
+    // reports and exports with no warning at all.
+    for (let start = 0; ; start += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from("invoice_items")
+        .select("id,invoice_id,product_name,quantity,unit_price,line_total")
+        .in("invoice_id", chunk)
+        .order("id")
+        .range(start, start + PAGE_SIZE - 1);
+
+      if (error) {
+        if (error.code === "42P01") return [];
+        throw error;
+      }
+      const page = (data ?? []) as InvoiceItemRow[];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) break;
     }
-    rows.push(...((data ?? []) as InvoiceItemRow[]));
   }
   return rows;
 }
