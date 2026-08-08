@@ -86,3 +86,58 @@ test("content refinements isolate untrusted text and offer three sales variants"
   assert.match(route, /short[\s\S]*professional[\s\S]*educational/);
   assert.match(route, /removeUnsupportedMedicalClaims/);
 });
+
+// ---------------------------------------------------------------------------
+// Medical claim guard — bypass regressions.
+//
+// approvedMarketingClaims is user-entered product data. Before these tests an
+// empty row, or any very short entry, matched every sentence through
+// String.includes and disabled the guard completely, letting an invented
+// "FDA approved" / "guaranteed cure" claim reach a medical-device audience.
+// ---------------------------------------------------------------------------
+
+const REGULATED_TEXT =
+  "این دستگاه تأیید FDA دارد. درمان قطعی را تضمین می‌کنیم.";
+
+function groundingWith(claims: string[]) {
+  return {
+    name: "دستگاه نمونه",
+    approvedMarketingClaims: claims,
+    technicalSpecifications: { power: "50W" },
+  } as never;
+}
+
+test("regulated claims are stripped when no product grounding exists", () => {
+  const result = removeUnsupportedMedicalClaims(REGULATED_TEXT, null);
+  assert.equal(result.text, "");
+  assert.equal(result.removed.length, 2);
+});
+
+test("an empty approved claim cannot disable the guard", () => {
+  const result = removeUnsupportedMedicalClaims(REGULATED_TEXT, groundingWith([""]));
+  assert.equal(result.text, "");
+  assert.equal(result.removed.length, 2);
+});
+
+test("a very short approved claim cannot authorise a regulated statement", () => {
+  for (const claim of ["ا", "ok", "CE", "  "]) {
+    const result = removeUnsupportedMedicalClaims(REGULATED_TEXT, groundingWith([claim]));
+    assert.equal(result.text, "", `claim ${JSON.stringify(claim)} disabled the guard`);
+  }
+});
+
+test("an unrelated approved claim does not authorise an invented approval", () => {
+  const result = removeUnsupportedMedicalClaims(
+    REGULATED_TEXT,
+    groundingWith(["این دستگاه برای فیزیوتراپی ایمن و بی‌خطر است"]),
+  );
+  assert.equal(result.text, "");
+  assert.equal(result.removed.length, 2);
+});
+
+test("a genuinely approved regulated claim is preserved", () => {
+  const approved = "این دستگاه دارای گواهی CE برای کاربرد فیزیوتراپی است";
+  const result = removeUnsupportedMedicalClaims(`${approved}.`, groundingWith([approved]));
+  assert.match(result.text, /گواهی CE/);
+  assert.equal(result.removed.length, 0);
+});

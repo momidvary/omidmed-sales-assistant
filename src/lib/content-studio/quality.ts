@@ -140,11 +140,23 @@ export function evidenceText(product?: ProductGrounding | null) {
   }).toLocaleLowerCase("fa");
 }
 
+/**
+ * An approved claim shorter than this cannot meaningfully authorise a
+ * regulated statement. Without the floor, an empty or one-character entry in
+ * approvedMarketingClaims matches every sentence via String.includes and
+ * silently disables the whole guard.
+ */
+const MIN_APPROVED_CLAIM_LENGTH = 8;
+
 export function removeUnsupportedMedicalClaims(
   text: string,
   product?: ProductGrounding | null,
 ) {
   const evidence = evidenceText(product);
+  const approvedClaims = (product?.approvedMarketingClaims ?? [])
+    .map((claim) => compactText(claim, 200).toLocaleLowerCase("fa"))
+    .filter((claim) => claim.length >= MIN_APPROVED_CLAIM_LENGTH);
+
   const removed: string[] = [];
   const safeSentences = text
     .split(/(?<=[.!؟\n])/u)
@@ -152,8 +164,12 @@ export function removeUnsupportedMedicalClaims(
       const matched = unsupportedClaimPatterns.find((pattern) => pattern.test(sentence));
       if (!matched) return true;
       const normalizedClaim = compactText(sentence, 200).toLocaleLowerCase("fa");
-      const supported = (product?.approvedMarketingClaims ?? []).some((claim) =>
-        normalizedClaim.includes(compactText(claim, 200).toLocaleLowerCase("fa")),
+      // A regulated statement survives only when an approved claim carries the
+      // same regulated wording *and* that approved text actually appears in the
+      // sentence. Matching on the approved claim alone would let any unrelated
+      // approved sentence authorise an invented FDA or guaranteed-cure claim.
+      const supported = approvedClaims.some(
+        (claim) => matched.test(claim) && normalizedClaim.includes(claim),
       );
       if (supported && evidence) return true;
       removed.push(sentence.trim());
