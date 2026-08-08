@@ -103,7 +103,7 @@ begin
     v_manual_id
   );
 
-  select count(*), min(id)
+  select count(*), min(id::text)::uuid
   into v_customer_count, v_canonical_id
   from public.customers
   where owner_id = v_owner_id
