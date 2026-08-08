@@ -446,17 +446,41 @@ grant execute on function public.create_purchase_invoice_v2(uuid,text,date,numer
 -- Payroll totals: advance is a payment, not a reduction of labor cost.
 -- ---------------------------------------------------------------------------
 
+-- `net_pay` is repaired only where the stored value is recognisably machine
+-- generated: either the untouched 0 default, or exactly what the previous
+-- advance-deducting formula produced. A figure the user entered by hand (a
+-- negotiated settlement, for example) is never overwritten, because this
+-- migration cannot tell a stale value from a deliberate one.
 update public.payroll_entries
-set
-  net_pay = greatest(
-    base_salary + overtime_amount + bonus_amount + allowance_amount - deductions_amount,
-    0
-  ),
-  status = case
-    when paid_amount + advance_amount >= greatest(
+set net_pay = greatest(
       base_salary + overtime_amount + bonus_amount + allowance_amount - deductions_amount,
       0
-    ) then 'paid'
+    )
+where net_pay is distinct from greatest(
+        base_salary + overtime_amount + bonus_amount + allowance_amount - deductions_amount,
+        0
+      )
+  and (
+    net_pay = 0
+    or net_pay = greatest(
+         greatest(
+           base_salary + overtime_amount + bonus_amount + allowance_amount - deductions_amount,
+           0
+         ) - advance_amount,
+         0
+       )
+  );
+
+-- `status` carries no manual meaning: it is a pure function of net_pay,
+-- paid_amount and advance_amount, so it is recomputed wherever it disagrees.
+update public.payroll_entries
+set status = case
+    when paid_amount + advance_amount >= net_pay then 'paid'
+    when paid_amount + advance_amount > 0 then 'partial'
+    else 'unpaid'
+  end
+where status is distinct from case
+    when paid_amount + advance_amount >= net_pay then 'paid'
     when paid_amount + advance_amount > 0 then 'partial'
     else 'unpaid'
   end;
