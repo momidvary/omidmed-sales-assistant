@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# No repository secrets are used anywhere in this workflow. The AI and Meta
+# providers are never contacted: the suite mocks them, and the migration job
+# runs against a throwaway Postgres service, never a hosted project. Nothing
+# here can send a real message or touch a production database.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Test, typecheck, lint, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit and contract tests
+        run: npm test
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit (fail on high or critical)
+        run: npm audit --audit-level=high
+
+  migrations:
+    name: Migrations against real Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Fresh database, 001 through latest
+        run: ./supabase/tests/harness/run.sh fresh
+
+      - name: Upgrade from 023 with legacy fixtures
+        run: ./supabase/tests/harness/run.sh upgrade
+
+      # With PGHOST set, the two database-gated tests in
+      # tests/migration-sql.test.ts execute instead of skipping.
+      - name: Full suite with database present
+        run: npm test
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject committed secrets and env files
+        run: |
+          set -euo pipefail
+          fail=0
+          if git ls-files | grep -E '(^|/)\.env($|\.)' ; then
+            echo "::error::an .env file is tracked in git"; fail=1
+          fi
+          if git ls-files | grep -E '^\.claude/' ; then
+            echo "::error::.claude/ must not be committed"; fail=1
+          fi
+          # Secret-shaped literals in tracked sources.
+          if git grep -nIE 'sk-[A-Za-z0-9]{20,}|eyJhbGciOi[A-Za-z0-9._-]{20,}' \
+               -- 'src/**' 'supabase/**' 'tests/**' '*.md' ; then
+            echo "::error::a secret-shaped literal is committed"; fail=1
+          fi
+          # A server-only secret must never be exposed through NEXT_PUBLIC_.
+          if git grep -nIE 'NEXT_PUBLIC_[A-Z_]*(SECRET|TOKEN|SERVICE_ROLE|API_KEY)' -- 'src/**' ; then
+            echo "::error::a secret is exposed via a NEXT_PUBLIC_ variable"; fail=1
+          fi
+          exit $fail
