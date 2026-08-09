@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { addTehranDaysAtTen } from "@/lib/campaigns/constants";
+
+// Sends in chunks of 100 across up to 2,500 campaign members, so this is the
+// longest-running SMS path. Without an explicit ceiling the platform default
+// can kill it mid-campaign, leaving the batch row stuck at 'processing' with
+// some recipients messaged and some not.
+export const runtime = "nodejs";
+export const maxDuration = 60;
 import {
   normalizeIranMobile,
   normalizeSender,

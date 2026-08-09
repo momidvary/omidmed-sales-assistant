@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { checkMeliPayamakDelivery } from "@/lib/sms/melipayamak-delivery";
 
+// Polls the provider in batches of 100 over every pending message, so the
+// work grows with history and needs an explicit ceiling.
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 type MessageRow = {
   id: string;
   provider_rec_id: string;
