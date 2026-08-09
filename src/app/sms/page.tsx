@@ -1,3 +1,4 @@
+import Link from "next/link";
 import AppShell from "@/components/app-shell";
 import { createClient } from "@/lib/supabase/server";
 import SmsCenter from "./sms-center";
@@ -59,18 +60,37 @@ function smsStatus(row: SmsLogRow) {
   return { label: "پذیرفته شد؛ در انتظار تحویل", failed: false };
 }
 
-export default async function SmsPage() {
-  const supabase = await createClient();
+const SMS_PAGE_SIZE = 60;
 
-  const { data: logs, error } = await supabase
+export default async function SmsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const supabase = await createClient();
+  const params = await searchParams;
+  const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const from = (page - 1) * SMS_PAGE_SIZE;
+
+  // Paged with an exact count. Previously this read the 60 newest messages and
+  // rendered rows.length as "ارسال‌های اخیر", so once history passed 60 the page
+  // reported 60 for ever and older messages were unreachable.
+  const {
+    data: logs,
+    error,
+    count,
+  } = await supabase
     .from("sms_messages")
     .select(
       "id,customer_id,source,mode,recipient,message_text,provider_rec_id,request_success,provider_status,delivery_status,sent_at,created_at",
+      { count: "exact" },
     )
     .order("created_at", { ascending: false })
-    .limit(60);
+    .range(from, from + SMS_PAGE_SIZE - 1);
 
   const rows = (logs ?? []) as SmsLogRow[];
+  const totalMessages = count ?? rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalMessages / SMS_PAGE_SIZE));
 
   const customerIds = Array.from(
     new Set(
@@ -126,8 +146,8 @@ export default async function SmsPage() {
 
       <section className={styles.metrics}>
         <article>
-          <span>ارسال‌های اخیر</span>
-          <strong>{numberFormatter.format(rows.length)}</strong>
+          <span>کل ارسال‌ها</span>
+          <strong>{numberFormatter.format(totalMessages)}</strong>
         </article>
         <article>
           <span>تحویل‌شده به گوشی</span>
@@ -226,6 +246,28 @@ export default async function SmsPage() {
                 })}
               </tbody>
             </table>
+
+            {totalPages > 1 ? (
+              <nav className={styles.pager} aria-label="صفحه‌بندی پیامک‌ها">
+                {page > 1 ? (
+                  <Link href={`/sms?page=${page - 1}`} rel="prev">
+                    صفحه قبل
+                  </Link>
+                ) : (
+                  <span aria-disabled="true">صفحه قبل</span>
+                )}
+                <small>
+                  {`صفحه ${numberFormatter.format(page)} از ${numberFormatter.format(totalPages)}`}
+                </small>
+                {page < totalPages ? (
+                  <Link href={`/sms?page=${page + 1}`} rel="next">
+                    صفحه بعد
+                  </Link>
+                ) : (
+                  <span aria-disabled="true">صفحه بعد</span>
+                )}
+              </nav>
+            ) : null}
           </div>
         ) : (
           <div className={styles.empty}>
