@@ -14,11 +14,21 @@ immutable
 strict
 set search_path = ''
 as $$
+  -- Must stay byte-for-byte equivalent to normalizeSearchText() in
+  -- src/lib/search/normalize.ts. The query is normalised in TypeScript and
+  -- matched with ilike against this stored column, so any rule present on one
+  -- side and absent on the other silently breaks search. Collapsing internal
+  -- whitespace was missing here: a customer stored as "محمد  امیدواری" could
+  -- not be found by typing that same name, because the query collapsed to a
+  -- single space and the document kept two.
   select lower(
-    translate(
-      replace(replace(trim(input_text), 'ي', 'ی'), 'ك', 'ک'),
-      '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',
-      '01234567890123456789'
+    regexp_replace(
+      translate(
+        replace(replace(trim(input_text), 'ي', 'ی'), 'ك', 'ک'),
+        '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',
+        '01234567890123456789'
+      ),
+      '\s+', ' ', 'g'
     )
   );
 $$;

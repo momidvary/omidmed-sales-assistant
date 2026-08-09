@@ -106,3 +106,56 @@ test("upgrade from 023 repairs derived data without clobbering manual data", { s
     "unknown legacy partial must be flagged, not guessed",
   );
 });
+
+// --------------------------------------------------------------------------
+// Search normalisation parity.
+//
+// The customer query is normalised in TypeScript and matched with ilike
+// against customers.search_document, which Postgres generates with
+// normalize_search_text(). The two must agree exactly: a rule on one side
+// only means the query and the stored document disagree and search silently
+// returns nothing. Collapsing internal whitespace was missing from the SQL
+// side, so a customer stored with a double space in their name could not be
+// found by typing that same name.
+// --------------------------------------------------------------------------
+
+const NORMALISER_INPUTS = [
+  "محمد امیدواری",
+  "محمد  امیدواری",
+  "  محمد   امیدواری  ",
+  "محمدي",
+  "شركت",
+  "۰۹۱۲۳۴۵۶۷۸۹",
+  "٠٩١٢٣٤٥٦٧٨٩",
+  "09123456789",
+  "ABC Medical Co",
+  "کلینیک\tفیزیوتراپی",
+  "تهران\nشرق",
+  "",
+  "   ",
+];
+
+test("SQL and TypeScript search normalisers agree", { skip: !hasDb }, async () => {
+  const { normalizeSearchText } = await import("../src/lib/search/normalize");
+
+  for (const input of NORMALISER_INPUTS) {
+    const sql = execFileSync(
+      "psql",
+      [
+        "-d",
+        "migtest_fresh",
+        "-tA",
+        "-c",
+        "select public.normalize_search_text($$" + input + "$$);",
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ).replace(/\n$/, "");
+
+    const ts = normalizeSearchText(input);
+    assert.equal(
+      sql,
+      ts,
+      `normaliser drift for ${JSON.stringify(input)}: SQL ${JSON.stringify(sql)} vs TS ${JSON.stringify(ts)}`,
+    );
+  }
+});
