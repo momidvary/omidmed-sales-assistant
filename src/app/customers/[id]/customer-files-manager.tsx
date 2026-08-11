@@ -184,7 +184,7 @@ export default function CustomerFilesManager({
       .remove([file.storage_path]);
 
     if (storageError) {
-      setError(`حذف فایل انجام نشد: ${storageError.message}`);
+      setError("حذف فایل از فضای ذخیره‌سازی انجام نشد. شناسه خطا: CUSTOMER-FILE-DELETE-STORAGE");
       setDeletingId(null);
       return;
     }
@@ -195,7 +195,7 @@ export default function CustomerFilesManager({
       .eq("id", file.id);
 
     if (rowError) {
-      setError(`رکورد فایل حذف نشد: ${rowError.message}`);
+      setError("فایل حذف شد اما پاک‌کردن رکورد آن کامل نشد. شناسه خطا: CUSTOMER-FILE-DELETE-ROW");
       setDeletingId(null);
       return;
     }
