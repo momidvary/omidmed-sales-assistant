@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { buildImageConceptPrompts } from "../src/lib/content-studio/image-concepts";
 import {
   buildGroundedBrief,
   buildProfessionalImagePrompt,
@@ -9,6 +10,7 @@ import {
   normalizeImageVariantCount,
   removeUnsupportedMedicalClaims,
 } from "../src/lib/content-studio/quality";
+import { isMissingContentStudioSchemaColumn } from "../src/lib/content-studio/schema-compat";
 
 test("grounded brief includes verified product and minimum CRM context", () => {
   const prompt = buildGroundedBrief({
@@ -41,6 +43,52 @@ test("image generation requests two to four selectable concepts", () => {
   assert.equal(normalizeImageVariantCount("1"), 2);
   assert.equal(normalizeImageVariantCount("12"), 4);
   assert.equal(normalizeImageVariantCount("invalid"), 3);
+});
+
+test("image concept prompts are deliberately different, not duplicate samples", () => {
+  const concepts = buildImageConceptPrompts("Base grounded prompt", 4);
+  assert.equal(concepts.length, 4);
+  assert.equal(new Set(concepts.map((concept) => concept.key)).size, 4);
+  assert.equal(new Set(concepts.map((concept) => concept.prompt)).size, 4);
+  assert.match(concepts[0].prompt, /hero composition/i);
+  assert.match(concepts[1].prompt, /clinical workflow/i);
+  assert.match(concepts[2].prompt, /educational detail/i);
+  assert.match(concepts[3].prompt, /premium campaign/i);
+  for (const concept of concepts) {
+    assert.match(concept.prompt, /Do not render Persian text/i);
+  }
+});
+
+test("legacy schema fallback only accepts explicit missing-column errors", () => {
+  const columns = ["channel_payload", "customer_id"];
+  assert.equal(
+    isMissingContentStudioSchemaColumn(
+      { code: "PGRST204", message: "Could not find the 'channel_payload' column" },
+      columns,
+    ),
+    true,
+  );
+  assert.equal(
+    isMissingContentStudioSchemaColumn(
+      { code: "42501", message: "new row violates row-level security policy" },
+      columns,
+    ),
+    false,
+  );
+  assert.equal(
+    isMissingContentStudioSchemaColumn(
+      { code: "23505", message: "duplicate key value" },
+      columns,
+    ),
+    false,
+  );
+  assert.equal(
+    isMissingContentStudioSchemaColumn(
+      { code: "PGRST204", message: "Could not find the 'unrelated_column' column" },
+      columns,
+    ),
+    false,
+  );
 });
 
 test("unsupported medical claims are deterministically removed", () => {
@@ -140,11 +188,6 @@ test("content refinements isolate untrusted text and offer three sales variants"
 
 // ---------------------------------------------------------------------------
 // Medical claim guard — bypass regressions.
-//
-// approvedMarketingClaims is user-entered product data. Before these tests an
-// empty row, or any very short entry, matched every sentence through
-// String.includes and disabled the guard completely, letting an invented
-// "FDA approved" / "guaranteed cure" claim reach a medical-device audience.
 // ---------------------------------------------------------------------------
 
 const REGULATED_TEXT =
@@ -195,12 +238,6 @@ test("a genuinely approved regulated claim is preserved", () => {
 
 // ---------------------------------------------------------------------------
 // Grounding payload bounds and prompt-injection posture.
-//
-// Product and CRM grounding come from user-entered data. compactText guarded
-// only scalars, so array and object fields were unbounded: one product built a
-// 157k-character brief and pushed the safety rules to the very end of the
-// prompt, where they are furthest from the injected text and first lost to
-// truncation.
 // ---------------------------------------------------------------------------
 
 const INJECTION =
@@ -243,9 +280,6 @@ test("safety rules precede any untrusted grounding data", () => {
 
 test("grounding data is labelled as context, not instruction", () => {
   const brief = briefWithHostileProduct();
-  // The injected text is preserved verbatim on purpose — rewriting real
-  // product data would corrupt it. It is instead fenced by explicit rules and
-  // stripped after generation by the claim guard.
   assert.match(brief, /فقط context هستند/);
   assert.match(brief, /نادیده بگیر و اجرا نکن/);
 });
