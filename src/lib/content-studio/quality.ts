@@ -114,6 +114,12 @@ const unsupportedClaimPatterns = [
   /contraindication/iu,
 ];
 
+const explicitPricePattern =
+  /([0-9۰-۹٠-٩][0-9۰-۹٠-٩٬,]*)(?:\s*(هزار|میلیون|میلیارد))?\s*(?:تومان|تومن|ریال)/iu;
+
+const inventoryClaimPattern =
+  /(?:ناموجود|موجودی\s*(?:محدود|کافی|رو\s+به\s+اتمام)?|رو\s+به\s+اتمام|در\s+انبار|آماده\s+ارسال|موجود(?:\s+است|\s+داریم)?|سفارشی|پس\s+از\s+سفارش)/iu;
+
 const genericOpenings = [
   "در دنیای امروز",
   "با افتخار معرفی می‌کنیم",
@@ -123,6 +129,61 @@ const genericOpenings = [
 function compactText(value: unknown, max = 1200) {
   if (typeof value !== "string") return "";
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function normalizeDigits(value: string) {
+  return value
+    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 1776))
+    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 1632));
+}
+
+function canonicalGroundedPrice(value: ProductGrounding["price"]) {
+  if (value === null || value === undefined || value === "") return null;
+  const normalized = normalizeDigits(String(value));
+  const digits = normalized.replace(/[^0-9]/g, "");
+  if (!digits) return null;
+  try {
+    return BigInt(digits);
+  } catch {
+    return null;
+  }
+}
+
+function claimedPrice(sentence: string) {
+  const match = sentence.match(explicitPricePattern);
+  if (!match) return null;
+  const digits = normalizeDigits(match[1]).replace(/[^0-9]/g, "");
+  if (!digits) return null;
+  const multiplier =
+    match[2] === "هزار"
+      ? 1_000n
+      : match[2] === "میلیون"
+        ? 1_000_000n
+        : match[2] === "میلیارد"
+          ? 1_000_000_000n
+          : 1n;
+  try {
+    return BigInt(digits) * multiplier;
+  } catch {
+    return null;
+  }
+}
+
+function inventoryClaimSupported(sentence: string, status: string | null | undefined) {
+  const normalized = compactText(sentence, 500).toLocaleLowerCase("fa");
+  const inventoryStatus = compactText(status, 40).toLocaleLowerCase("en");
+  if (!inventoryStatus || inventoryStatus === "unknown") return false;
+  if (/ناموجود/iu.test(normalized)) return inventoryStatus === "out_of_stock";
+  if (/(?:سفارشی|پس\s+از\s+سفارش)/iu.test(normalized)) {
+    return inventoryStatus === "made_to_order";
+  }
+  if (/(?:محدود|رو\s+به\s+اتمام)/iu.test(normalized)) {
+    return inventoryStatus === "low_stock";
+  }
+  if (/(?:موجود|در\s+انبار|آماده\s+ارسال)/iu.test(normalized)) {
+    return inventoryStatus === "in_stock" || inventoryStatus === "low_stock";
+  }
+  return false;
 }
 
 /**
@@ -186,6 +247,11 @@ export function evidenceText(product?: ProductGrounding | null) {
  */
 const MIN_APPROVED_CLAIM_LENGTH = 8;
 
+/**
+ * Post-generation guard for regulated medical claims and commercial facts.
+ * Model instructions are not a security boundary: explicit price and inventory
+ * statements are also rejected unless they agree with verified product data.
+ */
 export function removeUnsupportedMedicalClaims(
   text: string,
   product?: ProductGrounding | null,
@@ -194,24 +260,39 @@ export function removeUnsupportedMedicalClaims(
   const approvedClaims = (product?.approvedMarketingClaims ?? [])
     .map((claim) => compactText(claim, 200).toLocaleLowerCase("fa"))
     .filter((claim) => claim.length >= MIN_APPROVED_CLAIM_LENGTH);
+  const groundedPrice = canonicalGroundedPrice(product?.price);
 
   const removed: string[] = [];
   const safeSentences = text
     .split(/(?<=[.!؟\n])/u)
     .filter((sentence) => {
       const matched = unsupportedClaimPatterns.find((pattern) => pattern.test(sentence));
-      if (!matched) return true;
-      const normalizedClaim = compactText(sentence, 200).toLocaleLowerCase("fa");
-      // A regulated statement survives only when an approved claim carries the
-      // same regulated wording *and* that approved text actually appears in the
-      // sentence. Matching on the approved claim alone would let any unrelated
-      // approved sentence authorise an invented FDA or guaranteed-cure claim.
-      const supported = approvedClaims.some(
-        (claim) => matched.test(claim) && normalizedClaim.includes(claim),
-      );
-      if (supported && evidence) return true;
-      removed.push(sentence.trim());
-      return false;
+      if (matched) {
+        const normalizedClaim = compactText(sentence, 200).toLocaleLowerCase("fa");
+        const supported = approvedClaims.some(
+          (claim) => matched.test(claim) && normalizedClaim.includes(claim),
+        );
+        if (!(supported && evidence)) {
+          removed.push(sentence.trim());
+          return false;
+        }
+      }
+
+      const price = claimedPrice(sentence);
+      if (price !== null && (groundedPrice === null || price !== groundedPrice)) {
+        removed.push(sentence.trim());
+        return false;
+      }
+
+      if (
+        inventoryClaimPattern.test(sentence) &&
+        !inventoryClaimSupported(sentence, product?.inventoryStatus)
+      ) {
+        removed.push(sentence.trim());
+        return false;
+      }
+
+      return true;
     });
   return { text: safeSentences.join("").trim(), removed };
 }
