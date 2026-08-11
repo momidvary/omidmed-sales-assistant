@@ -33,3 +33,15 @@ test("customer file mutations enforce validation and ownership on the server", (
   assert.doesNotMatch(client, /\.storage[\s\S]*\.upload\(/);
   assert.match(client, /\/api\/customers\/\$\{encodeURIComponent\(customerId\)\}\/files/);
 });
+
+test("accounting attachment mutations enforce server-side validation and entity ownership", () => {
+  const route = readFileSync("src/app/api/accounting/attachments/route.ts", "utf8");
+  const client = readFileSync("src/components/accounting-attachment-uploader.tsx", "utf8");
+
+  assert.match(route, /validateMedicalDocument\(file, MAX_FILE_SIZE\)/);
+  assert.match(route, /\.eq\("owner_id", user\.id\)/);
+  assert.match(route, /entityTables/);
+  assert.match(route, /safeOriginalFilename\(file\.name\)/);
+  assert.doesNotMatch(client, /\.storage[\s\S]*\.upload\(/);
+  assert.match(client, /\/api\/accounting\/attachments/);
+});
