@@ -16,6 +16,8 @@ import {
   whatsappOutputSchema,
   type WhatsAppGeneratedContent,
 } from "@/lib/content-studio/generation";
+import { buildImageConceptPrompts } from "@/lib/content-studio/image-concepts";
+import { generateStructuredContent } from "@/lib/content-studio/openai";
 import {
   buildGroundedBrief,
   buildProfessionalImagePrompt,
@@ -23,13 +25,12 @@ import {
   CONTENT_GOALS,
   CONTENT_TYPES,
   IMAGE_PRESETS,
-  normalizeImageVariantCount,
   removeUnsupportedMedicalClaims,
   type BrandGrounding,
   type CustomerGrounding,
   type ProductGrounding,
 } from "@/lib/content-studio/quality";
-import { generateStructuredContent } from "@/lib/content-studio/openai";
+import { isMissingContentStudioSchemaColumn } from "@/lib/content-studio/schema-compat";
 import {
   decodeLegacyWhatsAppPayload,
   encodeLegacyWhatsAppPayload,
@@ -43,12 +44,12 @@ import {
   validateMedicalDocument,
 } from "@/lib/uploads/medical-document";
 import { buildWhatsAppReadiness, probeWhatsAppSchema } from "@/lib/whatsapp/readiness";
+import { resolveAiConfig, resolveImageModel } from "@/lib/ai/config";
 
+import ContentRevisionEditor from "./content-revision-editor";
 import CopyButton from "./copy-button";
 import styles from "./content-studio.module.css";
 import WhatsAppContentCard from "./whatsapp-content-card";
-import ContentRevisionEditor from "./content-revision-editor";
-import { resolveAiConfig, resolveImageModel } from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -61,6 +62,7 @@ type StoredImageVariant = {
   provider?: string;
   model?: string;
   generatedAt?: string;
+  concept?: string;
 };
 
 function storedImageVariants(metadata: Record<string, unknown> | null | undefined) {
@@ -169,6 +171,20 @@ type MessageHistory = {
   provider_result_unknown_at: string | null;
 };
 
+type LatestFollowup = {
+  followup_at: string;
+  outcome: string;
+};
+
+type OpenOpportunity = {
+  status: string;
+  stage: string;
+  product_interest: string | null;
+  quoted_at: string | null;
+  estimated_value: number | string | null;
+  next_followup_at: string | null;
+};
+
 const statusLabels: Record<ContentStatus, string> = {
   draft: "پیش‌نویس",
   pending_review: "منتظر تأیید",
@@ -248,6 +264,29 @@ const contentTypeLabels: Record<string, string> = {
   website_copy: "متن وب‌سایت",
 };
 
+const conceptLabels: Record<string, string> = {
+  hero: "Hero",
+  workflow: "محیط واقعی کار",
+  educational: "آموزشی",
+  campaign: "کمپین",
+};
+
+const contentStudioExtendedColumns = [
+  "channel_payload",
+  "customer_id",
+  "product_id",
+  "content_type",
+  "goal",
+  "tone",
+  "draft_text",
+  "final_text",
+  "provider",
+  "model",
+  "image_metadata",
+  "whatsapp_status",
+] as const;
+const whatsappConsentColumns = ["whatsapp_consent_status", "whatsapp_consent_at"] as const;
+
 async function requireUser() {
   const supabase = await createClient();
   const {
@@ -293,6 +332,16 @@ function optionalHttpUrl(value: string) {
   } catch {
     return null;
   }
+}
+
+function deriveActionUrgency(nextFollowupAt: string | null | undefined) {
+  if (!nextFollowupAt) return null;
+  const timestamp = new Date(nextFollowupAt).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  const difference = timestamp - Date.now();
+  if (difference <= 0) return "overdue";
+  if (difference <= 24 * 60 * 60 * 1000) return "due_soon";
+  return "normal";
 }
 
 async function saveBrandProfile(formData: FormData) {
@@ -449,18 +498,51 @@ async function generateContent(formData: FormData) {
     lead_stage: string | null;
     preferred_products: string[];
     last_purchase_at: string | null;
+    next_followup_at: string | null;
     total_sales: number | string | null;
     holo_balance_amount: number | string | null;
     holo_balance_status: string | null;
   } | null = null;
+  let purchasedProducts: string[] = [];
+  let latestFollowup: LatestFollowup | null = null;
+  let openOpportunity: OpenOpportunity | null = null;
   if (customerId) {
-    const result = await supabase
-      .from("customer_crm_summary")
-      .select("name,contact_name,city,status,priority,lead_stage,preferred_products,last_purchase_at,total_sales,holo_balance_amount,holo_balance_status")
-      .eq("id", customerId)
-      .eq("owner_id", user.id)
-      .maybeSingle();
-    customer = result.data;
+    const [customerResult, productsResult, followupResult, opportunityResult] = await Promise.all([
+      supabase
+        .from("customer_crm_summary")
+        .select("name,contact_name,city,status,priority,lead_stage,preferred_products,last_purchase_at,next_followup_at,total_sales,holo_balance_amount,holo_balance_status")
+        .eq("id", customerId)
+        .eq("owner_id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("customer_product_summary")
+        .select("product_name")
+        .eq("customer_id", customerId)
+        .order("total_amount", { ascending: false })
+        .limit(8),
+      supabase
+        .from("followups")
+        .select("followup_at,outcome")
+        .eq("customer_id", customerId)
+        .order("followup_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("sales_opportunities")
+        .select("status,stage,product_interest,quoted_at,estimated_value,next_followup_at")
+        .eq("customer_id", customerId)
+        .in("status", ["open", "on_hold"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    customer = customerResult.data;
+    if (!customer) redirect(`/content-studio?channel=${channel}&error=customer`);
+    purchasedProducts = (productsResult.data ?? [])
+      .map((row) => row.product_name)
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    latestFollowup = followupResult.data as LatestFollowup | null;
+    openOpportunity = opportunityResult.data as OpenOpportunity | null;
   }
 
   let product: ProductOption | null = null;
@@ -518,11 +600,22 @@ async function generateContent(formData: FormData) {
         customerType: customer.status,
         crmStage: customer.lead_stage,
         lastPurchase: customer.last_purchase_at,
-        purchasedProducts: customer.preferred_products,
+        purchasedProducts,
+        interests: customer.preferred_products,
+        lastContact: latestFollowup
+          ? `${latestFollowup.followup_at} · ${latestFollowup.outcome}`
+          : null,
+        opportunity: openOpportunity
+          ? `status=${openOpportunity.status}; stage=${openOpportunity.stage}; product=${openOpportunity.product_interest ?? "unspecified"}; estimated_value_toman=${openOpportunity.estimated_value ?? "unknown"}`
+          : null,
+        quote: openOpportunity?.quoted_at
+          ? `quoted_at=${openOpportunity.quoted_at}; estimated_value_toman=${openOpportunity.estimated_value ?? "unknown"}`
+          : null,
         actualSales: customer.total_sales,
         balanceAmount: customer.holo_balance_amount,
         balanceStatus: customer.holo_balance_status,
         commercialPriority: customer.priority,
+        urgency: deriveActionUrgency(openOpportunity?.next_followup_at ?? customer.next_followup_at),
       }
     : null;
   const groundedBrief = buildGroundedBrief({
@@ -553,7 +646,7 @@ async function generateContent(formData: FormData) {
               clinicName: customer?.name,
               city: customer?.city ?? undefined,
               contactName: customer?.contact_name ?? undefined,
-              })}`
+            })}`
           : `${groundedBrief}\n\n${buildInstagramPrompt({
               topic,
               productName: product?.name || productName,
@@ -652,7 +745,10 @@ async function generateContent(formData: FormData) {
       .select("id")
       .single();
     insertError = extendedResult.error;
-    if (extendedResult.error) {
+    if (
+      extendedResult.error &&
+      isMissingContentStudioSchemaColumn(extendedResult.error, contentStudioExtendedColumns)
+    ) {
       const compatibilityResult = await supabase.from("content_items").insert({
         ...baseInsert,
         hashtags: [encodeLegacyWhatsAppPayload(payload)],
@@ -760,54 +856,67 @@ async function generateImage(formData: FormData) {
     redirect(`/content-studio?channel=${channel}&error=image-config`);
   }
 
-  const variantCount = normalizeImageVariantCount(
+  const concepts = buildImageConceptPrompts(
+    item.image_prompt,
     process.env.OPENAI_IMAGE_VARIANT_COUNT,
   );
   const imageModel = resolveImageModel();
-  const response = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: imageModel,
-      prompt: item.image_prompt,
-      size:
-        (item.image_metadata as { preset?: string } | null)?.preset === "website"
-          ? "1536x1024"
-          : item.format === "story" || item.format === "reel" ||
-              ["instagram_portrait", "whatsapp_portrait"].includes(
-                (item.image_metadata as { preset?: string } | null)?.preset ?? "",
-              )
-            ? "1024x1536"
-            : "1024x1024",
-      quality: process.env.OPENAI_IMAGE_QUALITY?.trim() || "medium",
-      output_format: "png",
-      n: variantCount,
+  const size =
+    (item.image_metadata as { preset?: string } | null)?.preset === "website"
+      ? "1536x1024"
+      : item.format === "story" || item.format === "reel" ||
+          ["instagram_portrait", "whatsapp_portrait"].includes(
+            (item.image_metadata as { preset?: string } | null)?.preset ?? "",
+          )
+        ? "1024x1536"
+        : "1024x1024";
+  const requestedImages = await Promise.all(
+    concepts.map(async (concept) => {
+      try {
+        const response = await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: imageModel,
+            prompt: concept.prompt,
+            size,
+            quality: process.env.OPENAI_IMAGE_QUALITY?.trim() || "medium",
+            output_format: "png",
+            n: 1,
+          }),
+          signal: AbortSignal.timeout(55_000),
+          cache: "no-store",
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          data?: Array<{ b64_json?: string }>;
+        };
+        const encoded = result.data?.[0]?.b64_json;
+        if (!response.ok || !encoded) return null;
+        return { encoded, concept: concept.key };
+      } catch {
+        return null;
+      }
     }),
-    signal: AbortSignal.timeout(55_000),
-    cache: "no-store",
-  });
-  const result = (await response.json().catch(() => ({}))) as {
-    data?: Array<{ b64_json?: string }>;
-  };
-  const encodedVariants = (result.data ?? [])
-    .map((entry) => entry.b64_json)
-    .filter((value): value is string => Boolean(value))
-    .slice(0, variantCount);
-  if (!response.ok || !encodedVariants.length) {
+  );
+  const encodedVariants = requestedImages.filter(
+    (value): value is { encoded: string; concept: string } => Boolean(value),
+  );
+  if (encodedVariants.length < 2) {
     redirect(`/content-studio?channel=${channel}&error=image-generation`);
   }
 
   const admin = createAdminClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const uploadedPaths: string[] = [];
-  for (const encoded of encodedVariants) {
-    const imageBytes = Buffer.from(encoded, "base64");
+  const uploadedVariants: Array<{ path: string; concept: string }> = [];
+  for (const generated of encodedVariants) {
+    const imageBytes = Buffer.from(generated.encoded, "base64");
     if (
       !imageBytes.length ||
       imageBytes.length > 15 * 1024 * 1024 ||
       detectMedicalDocumentMime(imageBytes) !== "image/png"
     ) {
+      const uploadedPaths = uploadedVariants.map((variant) => variant.path);
       if (uploadedPaths.length) {
         await admin.storage.from("content-studio").remove(uploadedPaths);
       }
@@ -818,21 +927,24 @@ async function generateImage(formData: FormData) {
       .from("content-studio")
       .upload(path, imageBytes, { contentType: "image/png", upsert: false });
     if (uploadError) {
+      const uploadedPaths = uploadedVariants.map((variant) => variant.path);
       if (uploadedPaths.length) {
         await admin.storage.from("content-studio").remove(uploadedPaths);
       }
       redirect(`/content-studio?channel=${channel}&error=image-upload`);
     }
-    uploadedPaths.push(path);
+    uploadedVariants.push({ path, concept: generated.concept });
   }
 
   const generatedAt = new Date().toISOString();
-  const variants: StoredImageVariant[] = uploadedPaths.map((path) => ({
+  const variants: StoredImageVariant[] = uploadedVariants.map(({ path, concept }) => ({
     path,
+    concept,
     provider: "openai",
     model: imageModel,
     generatedAt,
   }));
+  const uploadedPaths = uploadedVariants.map((variant) => variant.path);
 
   const { error: updateError } = await supabase
     .from("content_items")
@@ -989,28 +1101,38 @@ export default async function ContentStudioPage({
   if (params.sent === "yes") contentQuery = contentQuery.not("sent_at", "is", null);
   if (params.sent === "no") contentQuery = contentQuery.is("sent_at", null);
   const extendedContentResult = await contentQuery.range(from, from + pageSize - 1);
-  let whatsappSchemaReady = !extendedContentResult.error;
+  const contentSchemaMissing = isMissingContentStudioSchemaColumn(
+    extendedContentResult.error,
+    contentStudioExtendedColumns,
+  );
+  let whatsappSchemaReady = !contentSchemaMissing;
   let contentData: unknown[] = extendedContentResult.data ?? [];
   let contentError = extendedContentResult.error;
-  if (extendedContentResult.error) {
+  let contentCount = extendedContentResult.count;
+  if (contentSchemaMissing) {
     whatsappSchemaReady = false;
-    const fallbackContentResult = await supabase
+    let fallbackQuery = supabase
       .from("content_items")
-      .select("id,created_by,title,topic,product_name,objective,channel,format,caption,on_image_text,call_to_action,hashtags,image_prompt,image_url,scheduled_for,status,created_at")
+      .select("id,created_by,title,topic,product_name,objective,channel,format,caption,on_image_text,call_to_action,hashtags,image_prompt,image_url,scheduled_for,status,created_at", { count: "exact" })
       .eq("created_by", user.id)
       .eq("channel", activeChannel)
       .order("scheduled_for", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .range(from, from + pageSize - 1);
+      .order("created_at", { ascending: false });
+    if (search) fallbackQuery = fallbackQuery.or(`title.ilike.%${search}%,topic.ilike.%${search}%,caption.ilike.%${search}%`);
+    if (params.status && ["draft", "pending_review", "approved", "published", "rejected"].includes(params.status)) {
+      fallbackQuery = fallbackQuery.eq("status", params.status);
+    }
+    const fallbackContentResult = await fallbackQuery.range(from, from + pageSize - 1);
     contentData = (fallbackContentResult.data ?? []).map((item) => ({
       ...item,
       channel_payload: null,
     }));
     contentError = fallbackContentResult.error;
+    contentCount = fallbackContentResult.count;
   }
   const allItems = contentData as ContentItem[];
   let items = allItems.filter((item) => item.created_by === user.id);
-  const totalItems = extendedContentResult.count ?? items.length;
+  const totalItems = contentCount ?? items.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
   const extendedCustomerResult = await collectAllRows<CustomerOption>((rangeFrom, rangeTo) =>
@@ -1022,8 +1144,13 @@ export default async function ContentStudioPage({
       .order("name")
       .range(rangeFrom, rangeTo) as unknown as Promise<{ data: CustomerOption[] | null; error: unknown }>,
   );
+  const customerSchemaMissing = isMissingContentStudioSchemaColumn(
+    extendedCustomerResult.error,
+    whatsappConsentColumns,
+  );
   let customerData: unknown[] = extendedCustomerResult.data ?? [];
-  if (extendedCustomerResult.error) {
+  let customerError = customerSchemaMissing ? null : extendedCustomerResult.error;
+  if (customerSchemaMissing) {
     whatsappSchemaReady = false;
     const fallback = await collectAllRows<Omit<CustomerOption, "whatsapp_consent_status" | "whatsapp_consent_at">>((rangeFrom, rangeTo) =>
       supabase
@@ -1035,10 +1162,11 @@ export default async function ContentStudioPage({
         .range(rangeFrom, rangeTo) as unknown as Promise<{ data: Array<Omit<CustomerOption, "whatsapp_consent_status" | "whatsapp_consent_at">> | null; error: unknown }>,
     );
     customerData = (fallback.data ?? []).map((customer) => ({
-        ...customer,
-        whatsapp_consent_status: "unknown",
-        whatsapp_consent_at: null,
-      }));
+      ...customer,
+      whatsapp_consent_status: "unknown",
+      whatsapp_consent_at: null,
+    }));
+    customerError = fallback.error;
   }
   const customers = customerData as CustomerOption[];
 
@@ -1137,6 +1265,7 @@ export default async function ContentStudioPage({
     topic: "موضوع محتوا را کوتاه و روشن بنویس.",
     type: "نوع محتوای واتساپ معتبر نیست.",
     brief: "هدف، مخاطب یا قالب تصویر معتبر نیست.",
+    customer: "مشتری انتخاب‌شده در CRM در دسترس نیست.",
     product: "محصول انتخاب‌شده در کاتالوگ شما در دسترس نیست.",
     claims: "پس از حذف ادعاهای بدون منبع، متن قابل استفاده‌ای باقی نماند.",
     generation: "تولید محتوا انجام نشد؛ تنظیمات مدل یا ورودی را بررسی کن.",
@@ -1145,7 +1274,7 @@ export default async function ContentStudioPage({
     schedule: "تاریخ زمان‌بندی معتبر نیست.",
     "image-prompt": "برای این محتوا پرامپت تصویر وجود ندارد.",
     "image-config": "تنظیمات تولید تصویر کامل نیست.",
-    "image-generation": "تولید تصویر انجام نشد.",
+    "image-generation": "حداقل دو Concept معتبر از سرویس تصویر دریافت نشد.",
     "image-upload": "بارگذاری تصویر در Supabase انجام نشد.",
     "image-database": "آدرس تصویر ذخیره نشد.",
     "image-selection": "انتخاب امن تصویر انجام نشد.",
@@ -1168,6 +1297,7 @@ export default async function ContentStudioPage({
       {params.saved ? <div className={styles.notice}>تغییرات با موفقیت ذخیره شد.</div> : null}
       {params.error ? <div className={styles.error}>{errorLabels[params.error] || "عملیات انجام نشد."}</div> : null}
       {contentError ? <div className={styles.error}>خواندن فهرست محتوا انجام نشد.</div> : null}
+      {customerError ? <div className={styles.error}>فهرست مشتریان دریافت نشد؛ تولید شخصی‌سازی‌شده تا رفع خطا غیرفعال است.</div> : null}
       {!whatsappSchemaReady && activeChannel === "whatsapp" ? (
         <div className={styles.error}>زیرساخت پایگاه داده واتساپ هنوز آماده نیست. تولید، ویرایش، کپی متن و دانلود تصویر فعال‌اند؛ ثبت رضایت، تاریخچه و ارسال رسمی تا اعمال جداگانه migration 023 غیرفعال می‌مانند.</div>
       ) : null}
@@ -1189,7 +1319,7 @@ export default async function ContentStudioPage({
             <label>۱. هدف<select name="goal" defaultValue="product_introduction">{CONTENT_GOALS.map((value) => <option value={value} key={value}>{goalLabels[value]}</option>)}</select></label>
             <label>۲. محصول واقعی<select name="product_id" defaultValue=""><option value="">بدون محصول مشخص؛ ساخت مشخصات ممنوع</option>{products.map((product) => <option value={product.id} key={product.id}>{product.name}{product.brand ? ` — ${product.brand}` : ""}{product.model ? ` ${product.model}` : ""}</option>)}</select></label>
             <label>نام محصول آزاد (فقط اگر هنوز در کاتالوگ نیست)<input name="product_name" maxLength={180} placeholder="بدون ساخت مشخصات فنی" /></label>
-            <label>۳. مشتری / مخاطب<select name="customer_id" defaultValue=""><option value="">بدون مشتری مشخص</option>{customers.map((customer) => <option value={customer.id} key={customer.id}>{customer.name} — {customer.contact_name || customer.city || "بدون مخاطب"}</option>)}</select></label>
+            <label>۳. مشتری / مخاطب<select name="customer_id" defaultValue="" disabled={Boolean(customerError)}><option value="">بدون مشتری مشخص</option>{customers.map((customer) => <option value={customer.id} key={customer.id}>{customer.name} — {customer.contact_name || customer.city || "بدون مخاطب"}</option>)}</select></label>
             <label>گروه مخاطب<select name="audience" defaultValue="physiotherapist">{CONTENT_AUDIENCES.map((value) => <option value={value} key={value}>{audienceLabels[value]}</option>)}</select></label>
             <label>۴. نوع محتوا<select name="content_type" defaultValue={activeChannel === "whatsapp" ? "whatsapp_sales" : "instagram_post"}>{(activeChannel === "whatsapp" ? WHATSAPP_CONTENT_TYPES : CONTENT_TYPES.filter((value) => !value.startsWith("whatsapp_") && value !== "sms")).map((type) => <option value={type} key={type}>{whatsappTypeLabels[type] || contentTypeLabels[type] || type}</option>)}</select></label>
             <label>۵. سبک<select name="tone" defaultValue="professional"><option value="professional">حرفه‌ای و فروش‌محور</option><option value="friendly">صمیمی و محترمانه</option><option value="educational">آموزشی و اعتمادساز</option><option value="direct">کوتاه و مستقیم</option></select></label>
@@ -1266,6 +1396,7 @@ export default async function ContentStudioPage({
             <input type="hidden" name="channel" value={activeChannel} />
             <input name="q" defaultValue={params.q} placeholder="جست‌وجوی عنوان، موضوع یا متن" />
             <select name="status" defaultValue={params.status ?? ""}><option value="">همه وضعیت‌ها</option>{statusKeys.map((status) => <option value={status} key={status}>{statusLabels[status]}</option>)}</select>
+            <select name="content_type" defaultValue={params.content_type ?? ""}><option value="">همه انواع محتوا</option>{(activeChannel === "whatsapp" ? WHATSAPP_CONTENT_TYPES : CONTENT_TYPES.filter((value) => !value.startsWith("whatsapp_") && value !== "sms")).map((type) => <option value={type} key={type}>{whatsappTypeLabels[type] || contentTypeLabels[type] || type}</option>)}</select>
             <select name="product" defaultValue={params.product ?? ""}><option value="">همه محصولات</option>{products.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select>
             <select name="customer" defaultValue={params.customer ?? ""}><option value="">همه مشتریان</option>{customers.map((customer) => <option value={customer.id} key={customer.id}>{customer.name}</option>)}</select>
             <select name="sent" defaultValue={params.sent ?? ""}><option value="">ارسال‌شده و نشده</option><option value="yes">ارسال‌شده</option><option value="no">ارسال‌نشده</option></select>
@@ -1306,9 +1437,9 @@ export default async function ContentStudioPage({
                               <input type="hidden" name="channel" value={activeChannel} />
                               <input type="hidden" name="image_path" value={variant.path} />
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={variant.url} alt={`${item.title} — concept ${index + 1}`} />
+                              <img src={variant.url} alt={`${item.title} — ${conceptLabels[variant.concept ?? ""] || `concept ${index + 1}`}`} />
                               <button type="submit" disabled={item.image_path === variant.path}>
-                                {item.image_path === variant.path ? "انتخاب‌شده" : `انتخاب طرح ${index + 1}`}
+                                {item.image_path === variant.path ? "انتخاب‌شده" : `انتخاب ${conceptLabels[variant.concept ?? ""] || `طرح ${index + 1}`}`}
                               </button>
                             </form>
                           ))}
