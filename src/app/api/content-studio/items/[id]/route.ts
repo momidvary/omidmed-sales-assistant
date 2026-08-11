@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 
-import { generateStructuredContent } from "@/lib/content-studio/openai";
-import {
-  removeUnsupportedMedicalClaims,
-  type ProductGrounding,
-} from "@/lib/content-studio/quality";
-import { createClient } from "@/lib/supabase/server";
 import {
   AiConfigError,
   aiConfigErrorStatus,
   resolveAiConfig,
 } from "@/lib/ai/config";
+import { generateStructuredContent } from "@/lib/content-studio/openai";
+import {
+  removeUnsupportedMedicalClaims,
+  type ProductGrounding,
+} from "@/lib/content-studio/quality";
+import { isStoredWhatsAppPayload } from "@/lib/content-studio/whatsapp-legacy";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,47 @@ const refinementActions = new Set([
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ ok: false, code, message }, { status });
+}
+
+async function loadProductGrounding(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+  productId: string | null,
+): Promise<ProductGrounding | null> {
+  if (!productId) return null;
+  const { data } = await supabase
+    .from("costing_products")
+    .select(
+      "name,category,brand,model,technical_specifications,applications,target_specialties,advantages,differentiators,current_cash_price,inventory_status,warranty,after_sales_service,training,approved_marketing_claims,primary_image_path",
+    )
+    .eq("id", productId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    name: data.name,
+    category: data.category,
+    brand: data.brand,
+    model: data.model,
+    technicalSpecifications: data.technical_specifications,
+    applications: data.applications,
+    targetSpecialties: data.target_specialties,
+    advantages: data.advantages,
+    differentiators: data.differentiators,
+    price: data.current_cash_price,
+    inventoryStatus: data.inventory_status,
+    warranty: data.warranty,
+    afterSalesService: data.after_sales_service,
+    training: data.training,
+    approvedMarketingClaims: data.approved_marketing_claims,
+    hasRealImage: Boolean(data.primary_image_path),
+  };
+}
+
+function hasUnsupportedContent(text: string, product: ProductGrounding | null) {
+  const normalized = text.trim();
+  const result = removeUnsupportedMedicalClaims(normalized, product);
+  return result.removed.length > 0 || result.text !== normalized;
 }
 
 export async function POST(
@@ -73,35 +115,7 @@ export async function POST(
     .maybeSingle();
   if (!item) return errorResponse("NOT_FOUND", "محتوا پیدا نشد.", 404);
 
-  let product: ProductGrounding | null = null;
-  if (item.product_id) {
-    const { data } = await supabase
-      .from("costing_products")
-      .select("name,category,brand,model,technical_specifications,applications,target_specialties,advantages,differentiators,current_cash_price,inventory_status,warranty,after_sales_service,training,approved_marketing_claims,primary_image_path")
-      .eq("id", item.product_id)
-      .eq("owner_id", user.id)
-      .maybeSingle();
-    if (data) {
-      product = {
-        name: data.name,
-        category: data.category,
-        brand: data.brand,
-        model: data.model,
-        technicalSpecifications: data.technical_specifications,
-        applications: data.applications,
-        targetSpecialties: data.target_specialties,
-        advantages: data.advantages,
-        differentiators: data.differentiators,
-        price: data.current_cash_price,
-        inventoryStatus: data.inventory_status,
-        warranty: data.warranty,
-        afterSalesService: data.after_sales_service,
-        training: data.training,
-        approvedMarketingClaims: data.approved_marketing_claims,
-        hasRealImage: Boolean(data.primary_image_path),
-      };
-    }
-  }
+  const product = await loadProductGrounding(supabase, user.id, item.product_id);
 
   const actionInstruction: Record<string, string> = {
     shorten: "متن را کوتاه و مستقیم کن و نکات تأییدشده اصلی را نگه دار.",
@@ -120,8 +134,11 @@ export async function POST(
         model: product.model,
         technicalSpecifications: product.technicalSpecifications,
         applications: product.applications,
+        targetSpecialties: product.targetSpecialties,
         advantages: product.advantages,
         differentiators: product.differentiators,
+        priceToman: product.price,
+        inventoryStatus: product.inventoryStatus,
         warranty: product.warranty,
         afterSalesService: product.afterSalesService,
         training: product.training,
@@ -240,6 +257,60 @@ export async function PATCH(
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return errorResponse("UNAUTHORIZED", "ورود به حساب لازم است.", 401);
+
+  const { data: item, error: itemError } = await supabase
+    .from("content_items")
+    .select("id,channel,product_id")
+    .eq("id", id)
+    .eq("created_by", user.id)
+    .maybeSingle();
+  if (itemError) return errorResponse("READ_FAILED", "بررسی محتوا انجام نشد.", 503);
+  if (!item) return errorResponse("NOT_FOUND", "محتوا پیدا نشد.", 404);
+
+  const product = await loadProductGrounding(supabase, user.id, item.product_id);
+  if (hasUnsupportedContent(caption, product) || hasUnsupportedContent(finalText || caption, product)) {
+    return errorResponse(
+      "UNSUPPORTED_CONTENT_CLAIM",
+      "متن شامل قیمت، موجودی یا ادعایی است که با اطلاعات تأییدشده محصول تطابق ندارد.",
+      400,
+    );
+  }
+
+  if (item.channel === "whatsapp") {
+    if (!isStoredWhatsAppPayload(body.channelPayload)) {
+      return errorResponse("INVALID_WHATSAPP_CONTENT", "ساختار متن واتساپ معتبر نیست.", 400);
+    }
+    const payload = body.channelPayload;
+    const guardedFields = [
+      payload.whatsapp_short_text,
+      payload.whatsapp_long_text,
+      payload.whatsapp_status_text,
+      payload.call_to_action,
+    ];
+    if (guardedFields.some((value) => hasUnsupportedContent(value, product))) {
+      return errorResponse(
+        "UNSUPPORTED_CONTENT_CLAIM",
+        "یکی از نسخه‌های واتساپ شامل ادعای تأییدنشده است؛ آن را اصلاح و دوباره ذخیره کنید.",
+        400,
+      );
+    }
+    const savedVariants = [
+      payload.whatsapp_short_text.trim(),
+      payload.whatsapp_long_text.trim(),
+      payload.whatsapp_status_text.trim(),
+    ];
+    if (
+      caption !== payload.whatsapp_long_text.trim() ||
+      !savedVariants.includes((finalText || caption).trim())
+    ) {
+      return errorResponse(
+        "INCONSISTENT_WHATSAPP_CONTENT",
+        "نسخه انتخاب‌شده با متن‌های ذخیره‌شده واتساپ هماهنگ نیست.",
+        400,
+      );
+    }
+  }
+
   const { data, error } = await supabase.rpc("save_content_revision", {
     p_content_item_id: id,
     p_caption: caption,
