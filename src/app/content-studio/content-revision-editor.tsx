@@ -8,6 +8,7 @@ type Version = {
   id: string;
   version_number: number;
   caption: string;
+  final_text: string | null;
   change_kind: string;
   created_at: string;
 };
@@ -37,26 +38,55 @@ export default function ContentRevisionEditor({
   const [pendingKind, setPendingKind] = useState("edit");
   const [variants, setVariants] = useState<Variant[]>([]);
 
+  async function persistRevision(
+    nextText: string,
+    changeKind: string,
+    successMessage: string,
+  ) {
+    const response = await fetch(`/api/content-studio/items/${encodeURIComponent(itemId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        caption: nextText,
+        finalText: nextText,
+        channelPayload,
+        changeKind,
+      }),
+    });
+    if (!response.ok) throw new Error();
+    setText(nextText);
+    setMessage(successMessage);
+    setPendingKind("edit");
+    setVariants([]);
+    setVersions([]);
+  }
+
   async function save() {
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/content-studio/items/${encodeURIComponent(itemId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          caption: text,
-          finalText: text,
-          channelPayload,
-          changeKind: pendingKind,
-        }),
-      });
-      if (!response.ok) throw new Error();
-      setMessage("نسخه ویرایش‌شده ذخیره شد.");
-      setPendingKind("edit");
-      setVersions([]);
+      await persistRevision(text, pendingKind, "نسخه ویرایش‌شده ذخیره شد.");
     } catch {
       setMessage("ذخیره انجام نشد. شناسه خطا: CONTENT-REVISION-SAVE");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreVersion(version: Version) {
+    const restoredText = (version.final_text || version.caption).trim();
+    if (!restoredText) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await persistRevision(
+        restoredText,
+        "edit",
+        `نسخه ${version.version_number} به‌عنوان نسخه جدید بازیابی و ذخیره شد.`,
+      );
+      setHistoryOpen(false);
+    } catch {
+      setMessage("بازیابی نسخه انجام نشد. شناسه خطا: CONTENT-REVISION-RESTORE");
     } finally {
       setBusy(false);
     }
@@ -128,7 +158,7 @@ export default function ContentRevisionEditor({
         <button type="button" disabled={busy || !text.trim()} onClick={save}>
           {busy ? "در حال ذخیره..." : "ذخیره نسخه"}
         </button>
-        <button type="button" onClick={toggleHistory}>
+        <button type="button" disabled={busy} onClick={toggleHistory}>
           {historyOpen ? "بستن تاریخچه" : "تاریخچه نسخه‌ها"}
         </button>
         <button type="button" disabled={busy || !text.trim()} onClick={() => refine("variants")}>سه نسخه</button>
@@ -163,7 +193,14 @@ export default function ContentRevisionEditor({
           {versions.length ? versions.map((version) => (
             <details key={version.id}>
               <summary>نسخه {version.version_number} · {version.change_kind}</summary>
-              <p>{version.caption}</p>
+              <p>{version.final_text || version.caption}</p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => restoreVersion(version)}
+              >
+                بازیابی به‌عنوان نسخه جدید
+              </button>
             </details>
           )) : <span>نسخه‌ای دریافت نشد.</span>}
         </div>
