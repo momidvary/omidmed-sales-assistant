@@ -156,12 +156,12 @@ function claimedPrice(sentence: string) {
   if (!digits) return null;
   const multiplier =
     match[2] === "هزار"
-      ? 1_000n
+      ? BigInt(1_000)
       : match[2] === "میلیون"
-        ? 1_000_000n
+        ? BigInt(1_000_000)
         : match[2] === "میلیارد"
-          ? 1_000_000_000n
-          : 1n;
+          ? BigInt(1_000_000_000)
+          : BigInt(1);
   try {
     return BigInt(digits) * multiplier;
   } catch {
