@@ -38,6 +38,7 @@ import {
   type StoredWhatsAppPayload,
 } from "@/lib/content-studio/whatsapp-legacy";
 import { createClient } from "@/lib/supabase/server";
+import { parseTehranLocalDateTime } from "@/lib/tehran-time";
 import {
   detectMedicalDocumentMime,
   safeOriginalFilename,
@@ -682,8 +683,8 @@ async function generateContent(formData: FormData) {
     if (!value.caption) redirect(`/content-studio?channel=${channel}&error=claims`);
   }
 
-  const scheduledDate = scheduledFor ? new Date(scheduledFor) : null;
-  if (scheduledDate && Number.isNaN(scheduledDate.getTime())) {
+  const scheduledDate = scheduledFor ? parseTehranLocalDateTime(scheduledFor) : null;
+  if (scheduledFor && !scheduledDate) {
     redirect(`/content-studio?channel=${channel}&error=schedule`);
   }
   const professionalImagePrompt = buildProfessionalImagePrompt({
