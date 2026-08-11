@@ -111,11 +111,12 @@ export default function WhatsAppContentCard({
   );
   const statusOnly = payload.content_type === "status";
   const manualUrl = useMemo(() => {
-    if (!normalized || consentStatus !== "opted_in" || statusOnly) return null;
+    if (dirty || !normalized || consentStatus !== "opted_in" || statusOnly) return null;
     return `https://wa.me/${normalized}?text=${encodeURIComponent(selectedText)}`;
-  }, [normalized, consentStatus, selectedText, statusOnly]);
+  }, [dirty, normalized, consentStatus, selectedText, statusOnly]);
   const cloudSendAvailable = Boolean(
     readiness.sendReady &&
+      !dirty &&
       customerId &&
       normalized &&
       consentStatus === "opted_in" &&
@@ -124,6 +125,10 @@ export default function WhatsAppContentCard({
       (messageType !== "image" || imageUrl) &&
       !statusOnly,
   );
+
+  function invalidateConfirmation() {
+    setFinalConfirmed(false);
+  }
 
   async function downloadImage() {
     if (!imageUrl) return;
@@ -154,6 +159,7 @@ export default function WhatsAppContentCard({
       const data = (await response.json()) as { ok?: boolean; message?: string };
       if (!response.ok || !data.ok) throw new Error(data.message);
       setConsentOverride(status);
+      invalidateConfirmation();
       setResult(status === "opted_in" ? "رضایت مشتری ثبت شد." : "انصراف مشتری ثبت شد.");
     } catch (error) {
       setResult(error instanceof Error && error.message ? error.message : "ثبت رضایت انجام نشد.");
@@ -186,9 +192,15 @@ export default function WhatsAppContentCard({
       const data = (await response.json()) as { ok?: boolean; version?: number; message?: string };
       if (!response.ok || !data.ok) throw new Error(data.message);
       setDirty(false);
-      setResult(`نسخه ${Number(data.version).toLocaleString("fa-IR")} ذخیره شد.`);
-    } catch {
-      setResult("ذخیره نسخه محتوا انجام نشد؛ دوباره تلاش کنید.");
+      invalidateConfirmation();
+      requestIdRef.current = null;
+      setResult(`نسخه ${Number(data.version).toLocaleString("fa-IR")} ذخیره شد؛ قبل از ارسال دوباره متن و گیرنده را تأیید کنید.`);
+    } catch (error) {
+      setResult(
+        error instanceof Error && error.message
+          ? error.message
+          : "ذخیره نسخه محتوا انجام نشد؛ دوباره تلاش کنید.",
+      );
     } finally {
       setPending(false);
     }
@@ -205,7 +217,10 @@ export default function WhatsAppContentCard({
       const data = (await listResponse.json()) as { ok?: boolean; templates?: TemplateOption[] };
       if (!listResponse.ok || !data.ok) throw new Error();
       setTemplates(data.templates ?? []);
-      setResult("فهرست Templateهای Meta به‌روز شد.");
+      setTemplateKey("");
+      setTemplateVariables("");
+      invalidateConfirmation();
+      setResult("فهرست Templateهای Meta به‌روز شد؛ Template را دوباره انتخاب و ارسال را تأیید کنید.");
     } catch {
       setResult("همگام‌سازی Templateهای Meta انجام نشد؛ تنظیمات سرور را بررسی کنید.");
     } finally {
@@ -214,7 +229,7 @@ export default function WhatsAppContentCard({
   }
 
   async function send() {
-    if (pending || statusOnly) return;
+    if (pending || statusOnly || dirty || !cloudSendAvailable) return;
     const clientRequestId = requestIdRef.current ?? crypto.randomUUID();
     requestIdRef.current = clientRequestId;
     setPending(true);
@@ -264,7 +279,10 @@ export default function WhatsAppContentCard({
             className={variant === key ? styles.activeVariant : undefined}
             key={key}
             type="button"
-            onClick={() => setVariant(key)}
+            onClick={() => {
+              setVariant(key);
+              invalidateConfirmation();
+            }}
           >
             {key === "short" ? "متن کوتاه" : key === "long" ? "متن کامل" : "استاتوس"}
           </button>
@@ -277,6 +295,7 @@ export default function WhatsAppContentCard({
         onChange={(event) => {
           setTexts((current) => ({ ...current, [variant]: event.target.value }));
           setDirty(true);
+          invalidateConfirmation();
         }}
       />
       <div className={styles.textTools}>
@@ -287,6 +306,9 @@ export default function WhatsAppContentCard({
         <CopyButton itemId={itemId} text={texts.status} label="کپی استاتوس" className={styles.copyButton} />
         {imageUrl ? <button type="button" onClick={downloadImage}>دانلود تصویر</button> : null}
       </div>
+      {dirty ? (
+        <p className={styles.compliance}>متن تغییر کرده است؛ برای فعال‌شدن ارسال یا لینک دستی، ابتدا نسخه جدید را ذخیره کنید.</p>
+      ) : null}
       <p className={styles.compliance}>{payload.compliance_note}</p>
 
       {statusOnly ? (
@@ -301,7 +323,7 @@ export default function WhatsAppContentCard({
               <select value={customerId} onChange={(event) => {
                 setCustomerId(event.target.value);
                 setConsentOverride(null);
-                setFinalConfirmed(false);
+                invalidateConfirmation();
               }}>
                 <option value="">انتخاب مشتری</option>
                 {customers.map((customer) => (
@@ -338,14 +360,17 @@ export default function WhatsAppContentCard({
           ) : null}
 
           <div className={styles.manualReady}>
-            <b>آماده ارسال دستی:</b> کپی و لینک امن wa.me فقط پیام را در واتساپ باز می‌کند و به معنی ارسال نیست.
-            {manualUrl ? <a href={manualUrl} target="_blank" rel="noreferrer">باز کردن واتساپ</a> : <span>برای فعال‌شدن، مشتری با شماره معتبر و رضایت ثبت‌شده انتخاب کنید.</span>}
+            <b>آماده ارسال دستی:</b> کپی و لینک امن wa.me فقط پیام ذخیره‌شده را در واتساپ باز می‌کند و به معنی ارسال نیست.
+            {manualUrl ? <a href={manualUrl} target="_blank" rel="noreferrer">باز کردن واتساپ</a> : <span>{dirty ? "ابتدا تغییرات متن را ذخیره کنید." : "برای فعال‌شدن، مشتری با شماره معتبر و رضایت ثبت‌شده انتخاب کنید."}</span>}
           </div>
 
           <div className={styles.sendBox}>
             <label>
               روش ارسال رسمی
-              <select value={messageType} onChange={(event) => setMessageType(event.target.value as "text" | "image" | "template")}>
+              <select value={messageType} onChange={(event) => {
+                setMessageType(event.target.value as "text" | "image" | "template");
+                invalidateConfirmation();
+              }}>
                 <option value="text">متن آزاد در پنجره ۲۴ ساعته</option>
                 <option value="image" disabled={!imageUrl}>تصویر در پنجره ۲۴ ساعته</option>
                 <option value="template">Template تأییدشده Meta</option>
@@ -361,6 +386,7 @@ export default function WhatsAppContentCard({
                     setTemplateVariables(
                       Array.from({ length: template?.variable_count ?? 0 }, (_, index) => `مقدار ${index + 1}`).join("\n"),
                     );
+                    invalidateConfirmation();
                   }}>
                     <option value="">انتخاب از فهرست همگام‌شده</option>
                     {templates.map((template) => (
@@ -370,14 +396,20 @@ export default function WhatsAppContentCard({
                     ))}
                   </select>
                 </label>
-                <textarea value={templateVariables} onChange={(event) => setTemplateVariables(event.target.value)} placeholder="هر متغیر در یک خط" />
+                <textarea value={templateVariables} onChange={(event) => {
+                  setTemplateVariables(event.target.value);
+                  invalidateConfirmation();
+                }} placeholder="هر متغیر در یک خط" />
                 <button type="button" disabled={pending || !readiness.cloudApiConfigured} onClick={syncTemplates}>همگام‌سازی از Meta</button>
                 <small>فقط Templateهای APPROVED دریافت‌شده مستقیم از Meta قابل ارسال‌اند؛ نام حدسی پذیرفته نمی‌شود.</small>
               </div>
             ) : (
-              <label className={styles.checkRow}><input type="checkbox" checked={windowConfirmed} onChange={(event) => setWindowConfirmed(event.target.checked)} /> مشتری در ۲۴ ساعت گذشته گفتگو را آغاز کرده و پنجره مکالمه باز است.</label>
+              <label className={styles.checkRow}><input type="checkbox" checked={windowConfirmed} onChange={(event) => {
+                setWindowConfirmed(event.target.checked);
+                invalidateConfirmation();
+              }} /> مشتری در ۲۴ ساعت گذشته گفتگو را آغاز کرده و پنجره مکالمه باز است.</label>
             )}
-            <label className={styles.checkRow}><input type="checkbox" checked={finalConfirmed} onChange={(event) => setFinalConfirmed(event.target.checked)} /> گیرنده و متن را بررسی کردم و ارسال واقعی را تأیید می‌کنم.</label>
+            <label className={styles.checkRow}><input type="checkbox" checked={finalConfirmed} disabled={dirty} onChange={(event) => setFinalConfirmed(event.target.checked)} /> گیرنده و متن ذخیره‌شده را بررسی کردم و ارسال واقعی را تأیید می‌کنم.</label>
             <button
               type="button"
               disabled={pending || !cloudSendAvailable}
