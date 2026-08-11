@@ -32,6 +32,11 @@ import {
 } from "@/lib/content-studio/quality";
 import { isMissingContentStudioSchemaColumn } from "@/lib/content-studio/schema-compat";
 import {
+  canTransitionContentStatus,
+  isContentWorkflowStatus,
+  nextContentStatusActions,
+} from "@/lib/content-studio/status";
+import {
   decodeLegacyWhatsAppPayload,
   encodeLegacyWhatsAppPayload,
   isStoredWhatsAppPayload,
@@ -49,6 +54,7 @@ import { resolveAiConfig, resolveImageModel } from "@/lib/ai/config";
 
 import ContentRevisionEditor from "./content-revision-editor";
 import CopyButton from "./copy-button";
+import PersianImageOverlay from "./persian-image-overlay";
 import styles from "./content-studio.module.css";
 import WhatsAppContentCard from "./whatsapp-content-card";
 
@@ -191,6 +197,14 @@ const statusLabels: Record<ContentStatus, string> = {
   pending_review: "منتظر تأیید",
   approved: "تأییدشده",
   published: "منتشرشده",
+  rejected: "نیازمند اصلاح",
+};
+
+const statusActionLabels: Record<ContentStatus, string> = {
+  draft: "بازگشت به پیش‌نویس",
+  pending_review: "ارسال برای تأیید",
+  approved: "تأیید",
+  published: "منتشر شد",
   rejected: "نیازمند اصلاح",
 };
 
@@ -1016,20 +1030,48 @@ async function changeStatus(formData: FormData) {
   const { supabase, user } = await requireUser();
   const itemId = String(formData.get("item_id") ?? "").trim();
   const channel = String(formData.get("channel") ?? "instagram");
-  const status = String(formData.get("status") ?? "") as ContentStatus;
-  if (!itemId || !["draft", "pending_review", "approved", "published", "rejected"].includes(status)) return;
-  const update: Record<string, unknown> = { status };
-  if (status === "approved") {
+  const targetStatus = String(formData.get("status") ?? "");
+  if (!uuidPattern.test(itemId) || !isContentWorkflowStatus(targetStatus)) {
+    redirect(`/content-studio?channel=${channel}&error=status`);
+  }
+
+  const { data: current, error: readError } = await supabase
+    .from("content_items")
+    .select("status")
+    .eq("id", itemId)
+    .eq("created_by", user.id)
+    .maybeSingle();
+  if (readError || !current || !isContentWorkflowStatus(current.status)) {
+    redirect(`/content-studio?channel=${channel}&error=status`);
+  }
+  if (!canTransitionContentStatus(current.status, targetStatus)) {
+    redirect(`/content-studio?channel=${channel}&error=status-transition`);
+  }
+
+  const update: Record<string, unknown> = { status: targetStatus };
+  if (targetStatus === "approved") {
     update.reviewed_by = user.id;
     update.approved_at = new Date().toISOString();
   }
-  if (status === "published") update.published_at = new Date().toISOString();
-  const { error } = await supabase
+  if (targetStatus === "published") update.published_at = new Date().toISOString();
+  if (targetStatus === "draft") {
+    update.reviewed_by = null;
+    update.approved_at = null;
+    update.published_at = null;
+  }
+  if (targetStatus === "rejected") update.published_at = null;
+
+  const { data: updated, error } = await supabase
     .from("content_items")
     .update(update)
     .eq("id", itemId)
-    .eq("created_by", user.id);
-  if (error) redirect(`/content-studio?channel=${channel}&error=status`);
+    .eq("created_by", user.id)
+    .eq("status", current.status)
+    .select("id")
+    .maybeSingle();
+  if (error || !updated) {
+    redirect(`/content-studio?channel=${channel}&error=status-conflict`);
+  }
   revalidatePath("/content-studio");
   redirect(`/content-studio?channel=${channel}&saved=status`);
 }
@@ -1283,6 +1325,8 @@ export default async function ContentStudioPage({
     catalog: "ذخیره اطلاعات تأییدشده محصول انجام نشد.",
     "product-image": "تصویر واقعی محصول باید PNG یا JPEG معتبر و حداکثر ۱۵ مگابایت باشد.",
     status: "تغییر وضعیت محتوا انجام نشد.",
+    "status-transition": "این تغییر وضعیت مجاز نیست؛ محتوا باید مراحل بازبینی را به‌ترتیب طی کند.",
+    "status-conflict": "وضعیت محتوا هم‌زمان تغییر کرده است؛ صفحه را تازه‌سازی و دوباره بررسی کن.",
   };
 
   return (
@@ -1416,6 +1460,7 @@ export default async function ContentStudioPage({
                     url: signedImageUrls.get(variant.path),
                   }))
                   .filter((variant): variant is StoredImageVariant & { url: string } => Boolean(variant.url));
+                const statusActions = nextContentStatusActions(item.status);
                 return (
                   <article className={styles.card} key={item.id}>
                     <header className={styles.cardHeader}><div><small>{item.channel === "whatsapp" && whatsappPayload ? whatsappTypeLabels[whatsappPayload.content_type] : formatLabels[item.format] || item.format}</small><h3>{item.title}</h3><p>{item.topic}</p></div><span className={`${styles.status} ${styles[item.status]}`}>{statusLabels[item.status]}</span></header>
@@ -1428,6 +1473,18 @@ export default async function ContentStudioPage({
                       )}
                       {item.channel === "instagram" ? <div className={styles.copy}><strong>{item.on_image_text || "متن روی تصویر تعیین نشده"}</strong><p>{item.caption}</p>{item.call_to_action ? <b>{item.call_to_action}</b> : null}{item.hashtags.length ? <small>{item.hashtags.join(" ")}</small> : null}<ContentRevisionEditor itemId={item.id} initialText={item.final_text || item.caption} channelPayload={item.channel_payload ?? {}} /></div> : null}
                     </div>
+                    {item.image_url ? (
+                      <PersianImageOverlay
+                        imageUrl={item.image_url}
+                        defaultHeadline={
+                          item.channel === "whatsapp" && whatsappPayload
+                            ? whatsappPayload.whatsapp_short_text
+                            : item.on_image_text
+                        }
+                        defaultCta={item.call_to_action}
+                        filename={`omidmed-content-${item.id}.png`}
+                      />
+                    ) : null}
                     {imageVariants.length ? (
                       <div className={styles.imageVariants}>
                         <strong>Conceptهای خصوصی این محتوا</strong>
@@ -1460,9 +1517,19 @@ export default async function ContentStudioPage({
                       <div className={styles.actions}><CopyButton itemId={item.id} className={styles.copyButton} text={instagramText} label="کپی متن اینستاگرام" /><span className={styles.date}>{formatDate(item.scheduled_for)}</span></div>
                     ) : <div className={styles.error}>ساختار ذخیره‌شده این محتوا معتبر نیست.</div>}
                     <div className={styles.actions}>
-                      <form action={changeStatus}><input type="hidden" name="item_id" value={item.id} /><input type="hidden" name="channel" value={activeChannel} /><input type="hidden" name="status" value="pending_review" /><button className={styles.secondary} type="submit">ارسال برای تأیید</button></form>
-                      <form action={changeStatus}><input type="hidden" name="item_id" value={item.id} /><input type="hidden" name="channel" value={activeChannel} /><input type="hidden" name="status" value="approved" /><button className={styles.approve} type="submit">تأیید</button></form>
-                      <form action={changeStatus}><input type="hidden" name="item_id" value={item.id} /><input type="hidden" name="channel" value={activeChannel} /><input type="hidden" name="status" value="published" /><button type="submit">منتشر شد</button></form>
+                      {statusActions.map((status) => (
+                        <form action={changeStatus} key={status}>
+                          <input type="hidden" name="item_id" value={item.id} />
+                          <input type="hidden" name="channel" value={activeChannel} />
+                          <input type="hidden" name="status" value={status} />
+                          <button
+                            className={status === "approved" ? styles.approve : status === "pending_review" ? styles.secondary : undefined}
+                            type="submit"
+                          >
+                            {statusActionLabels[status]}
+                          </button>
+                        </form>
+                      ))}
                       <span className={styles.date}>{formatDate(item.scheduled_for)}</span>
                     </div>
                   </article>
