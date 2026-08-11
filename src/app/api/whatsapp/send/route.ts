@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
+import { WHATSAPP_CONTENT_TYPES } from "@/lib/content-studio/generation";
+import {
+  removeUnsupportedMedicalClaims,
+  type ProductGrounding,
+} from "@/lib/content-studio/quality";
+import { isStoredWhatsAppPayload } from "@/lib/content-studio/whatsapp-legacy";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildImagePayload,
@@ -13,7 +19,6 @@ import {
   type WhatsAppMessageType,
 } from "@/lib/whatsapp/cloud-api";
 import { validateSendPolicy } from "@/lib/whatsapp/send-policy";
-import { WHATSAPP_CONTENT_TYPES } from "@/lib/content-studio/generation";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -38,6 +43,41 @@ type SendBody = {
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ ok: false, code, message }, { status });
+}
+
+async function loadProductGrounding(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+  productId: string | null,
+): Promise<ProductGrounding | null> {
+  if (!productId) return null;
+  const { data, error } = await supabase
+    .from("costing_products")
+    .select(
+      "name,category,brand,model,technical_specifications,applications,target_specialties,advantages,differentiators,current_cash_price,inventory_status,warranty,after_sales_service,training,approved_marketing_claims,primary_image_path",
+    )
+    .eq("id", productId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    name: data.name,
+    category: data.category,
+    brand: data.brand,
+    model: data.model,
+    technicalSpecifications: data.technical_specifications,
+    applications: data.applications,
+    targetSpecialties: data.target_specialties,
+    advantages: data.advantages,
+    differentiators: data.differentiators,
+    price: data.current_cash_price,
+    inventoryStatus: data.inventory_status,
+    warranty: data.warranty,
+    afterSalesService: data.after_sales_service,
+    training: data.training,
+    approvedMarketingClaims: data.approved_marketing_claims,
+    hasRealImage: Boolean(data.primary_image_path),
+  };
 }
 
 export async function POST(request: Request) {
@@ -76,7 +116,7 @@ export async function POST(request: Request) {
   const [contentResult, customerResult] = await Promise.all([
     supabase
       .from("content_items")
-      .select("id,created_by,channel,channel_payload,image_path,image_url")
+      .select("id,created_by,channel,channel_payload,image_path,image_url,product_id")
       .eq("id", contentItemId)
       .eq("created_by", user.id)
       .maybeSingle(),
@@ -100,17 +140,14 @@ export async function POST(request: Request) {
   if (!content || content.channel !== "whatsapp") {
     return errorResponse("CONTENT_NOT_FOUND", "محتوای واتساپ در دسترس نیست.", 404);
   }
-  const channelPayload =
-    content.channel_payload && typeof content.channel_payload === "object"
-      ? (content.channel_payload as { content_type?: unknown })
-      : null;
-  if (
-    typeof channelPayload?.content_type !== "string" ||
-    !WHATSAPP_CONTENT_TYPES.includes(channelPayload.content_type as never)
-  ) {
+  if (!isStoredWhatsAppPayload(content.channel_payload)) {
+    return errorResponse("INVALID_CONTENT", "ساختار ذخیره‌شده محتوای واتساپ معتبر نیست.", 400);
+  }
+  const channelPayload = content.channel_payload;
+  if (!WHATSAPP_CONTENT_TYPES.includes(channelPayload.content_type as never)) {
     return errorResponse("INVALID_CONTENT", "ساختار محتوای واتساپ معتبر نیست.", 400);
   }
-  if (channelPayload?.content_type === "status") {
+  if (channelPayload.content_type === "status") {
     return errorResponse(
       "STATUS_MANUAL_ONLY",
       "استاتوس فقط برای کپی و دانلود آماده می‌شود و ارسال API ندارد.",
@@ -119,6 +156,32 @@ export async function POST(request: Request) {
   }
   if (!customer) {
     return errorResponse("CUSTOMER_NOT_FOUND", "مشتری در دسترس نیست.", 404);
+  }
+
+  const messageText = typeof body.messageText === "string" ? body.messageText.trim() : "";
+  if (messageType !== "template") {
+    const savedTexts = [
+      channelPayload.whatsapp_short_text,
+      channelPayload.whatsapp_long_text,
+      channelPayload.whatsapp_status_text,
+    ].map((value) => value.trim());
+    if (!messageText || !savedTexts.includes(messageText)) {
+      return errorResponse(
+        "CONTENT_NOT_SAVED",
+        "متن تغییر کرده یا ذخیره نشده است؛ ابتدا نسخه محتوا را ذخیره و سپس دوباره ارسال را تأیید کنید.",
+        409,
+      );
+    }
+
+    const product = await loadProductGrounding(supabase, user.id, content.product_id);
+    const guarded = removeUnsupportedMedicalClaims(messageText, product);
+    if (guarded.removed.length || guarded.text !== messageText) {
+      return errorResponse(
+        "UNSUPPORTED_CONTENT_CLAIM",
+        "متن ذخیره‌شده شامل قیمت، موجودی یا ادعایی است که با اطلاعات تأییدشده محصول تطابق ندارد؛ ابتدا محتوا را اصلاح و ذخیره کنید.",
+        400,
+      );
+    }
   }
 
   const config = loadWhatsAppCloudConfig();
@@ -135,8 +198,18 @@ export async function POST(request: Request) {
   const templateLanguage =
     typeof body.templateLanguage === "string" ? body.templateLanguage.trim() : "fa";
   const templateVariables = Array.isArray(body.templateVariables)
-    ? body.templateVariables.filter((item): item is string => typeof item === "string")
+    ? body.templateVariables
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
     : [];
+  if (
+    templateVariables.length > 20 ||
+    templateVariables.some((item) => item.length > 1000)
+  ) {
+    return errorResponse("INVALID_TEMPLATE_VARIABLES", "متغیرهای Template معتبر نیستند.", 400);
+  }
+
   let approvedTemplate = false;
   if (messageType === "template") {
     const { data: template, error: templateError } = await admin
@@ -172,7 +245,6 @@ export async function POST(request: Request) {
   });
   if (!policy.ok) return errorResponse(policy.code, policy.message, 400);
 
-  const messageText = typeof body.messageText === "string" ? body.messageText.trim() : "";
   let imageUrl = "";
   if (messageType === "image") {
     if (content.image_path) {
