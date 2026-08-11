@@ -60,6 +60,57 @@ test("explicit approved claim remains available", () => {
   assert.equal(result.removed.length, 0);
 });
 
+test("ungrounded numeric price is stripped after generation", () => {
+  const result = removeUnsupportedMedicalClaims(
+    "قیمت این دستگاه ۵٬۰۰۰٬۰۰۰ تومان است. برای دریافت قیمت به‌روز تماس بگیرید.",
+    { name: "محصول آزمایشی", price: null },
+  );
+  assert.equal(result.removed.length, 1);
+  assert.equal(result.text, "برای دریافت قیمت به‌روز تماس بگیرید.");
+});
+
+test("exact grounded price remains available with Persian digit formatting", () => {
+  const result = removeUnsupportedMedicalClaims("قیمت این دستگاه ۵٬۰۰۰٬۰۰۰ تومان است.", {
+    name: "محصول آزمایشی",
+    price: 5_000_000,
+  });
+  assert.equal(result.removed.length, 0);
+  assert.match(result.text, /۵٬۰۰۰٬۰۰۰ تومان/);
+});
+
+test("a fabricated price is stripped even when another price is grounded", () => {
+  const result = removeUnsupportedMedicalClaims("قیمت این دستگاه ۶ میلیون تومان است.", {
+    name: "محصول آزمایشی",
+    price: 5_000_000,
+  });
+  assert.equal(result.text, "");
+  assert.equal(result.removed.length, 1);
+});
+
+test("inventory assertions must agree with the verified inventory status", () => {
+  const supported = removeUnsupportedMedicalClaims("این محصول موجود است.", {
+    name: "محصول آزمایشی",
+    inventoryStatus: "in_stock",
+  });
+  assert.equal(supported.removed.length, 0);
+
+  const contradicted = removeUnsupportedMedicalClaims("این محصول ناموجود است.", {
+    name: "محصول آزمایشی",
+    inventoryStatus: "in_stock",
+  });
+  assert.equal(contradicted.text, "");
+  assert.equal(contradicted.removed.length, 1);
+});
+
+test("asking the customer to check inventory is not treated as an inventory assertion", () => {
+  const result = removeUnsupportedMedicalClaims(
+    "برای اطلاع از موجودی و زمان تحویل تماس بگیرید.",
+    { name: "محصول آزمایشی", inventoryStatus: "unknown" },
+  );
+  assert.equal(result.removed.length, 0);
+  assert.match(result.text, /اطلاع از موجودی/);
+});
+
 test("generic Persian openings are detectable", () => {
   assert.equal(containsGenericOpening("در دنیای امروز تجهیزات پزشکی مهم‌اند."), true);
   assert.equal(containsGenericOpening("برای بررسی موجودی این محصول تماس بگیرید."), false);
