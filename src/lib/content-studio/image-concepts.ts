@@ -24,7 +24,7 @@ const conceptDirections = [
 ] as const;
 
 export type ImageConceptPrompt = {
-  key: (typeof conceptDirections)[number]["key"];
+  key: string;
   prompt: string;
 };
 
