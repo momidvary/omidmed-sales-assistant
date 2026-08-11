@@ -1,3 +1,5 @@
+import { removeUnsupportedMedicalClaims } from "./quality";
+
 export const WHATSAPP_CONTENT_TYPES = [
   "whatsapp_sales",
   "whatsapp_follow_up",
@@ -125,6 +127,19 @@ function parseJsonObject(raw: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function cleanInstagramSurfaceText(value: unknown, max: number) {
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim().slice(0, max);
+  if (!cleaned) return null;
+
+  // On-image copy and CTAs are high-visibility surfaces and are persisted before
+  // the product-aware guard in the page action runs. Keep them conservative at
+  // parse time: unsupported medical, price and inventory claims are removed
+  // even when the model ignores its prompt. Grounded claims may still appear in
+  // the caption, which is validated later with the selected product context.
+  return removeUnsupportedMedicalClaims(cleaned, null).text || null;
+}
+
 export function parseInstagramContent(raw: string): InstagramGeneratedContent {
   const value = parseJsonObject(raw);
   const hashtags = value.hashtags;
@@ -134,14 +149,8 @@ export function parseInstagramContent(raw: string): InstagramGeneratedContent {
   return {
     title: cleanString(value.title, "title", 180),
     caption: cleanString(value.caption, "caption", 8000),
-    on_image_text:
-      typeof value.on_image_text === "string"
-        ? value.on_image_text.trim().slice(0, 500) || null
-        : null,
-    call_to_action:
-      typeof value.call_to_action === "string"
-        ? value.call_to_action.trim().slice(0, 500) || null
-        : null,
+    on_image_text: cleanInstagramSurfaceText(value.on_image_text, 500),
+    call_to_action: cleanInstagramSurfaceText(value.call_to_action, 500),
     hashtags: hashtags.map((item) => item.trim()).filter(Boolean).slice(0, 15),
     image_prompt:
       typeof value.image_prompt === "string"
