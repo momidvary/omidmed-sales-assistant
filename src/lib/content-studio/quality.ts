@@ -252,6 +252,77 @@ const MIN_APPROVED_CLAIM_LENGTH = 8;
  * Model instructions are not a security boundary: explicit price and inventory
  * statements are also rejected unless they agree with verified product data.
  */
+/**
+ * Numeric grounding for technical claims.
+ *
+ * A measurement is a number paired with a unit. Every measurement a sentence
+ * asserts about the product must appear in its verified technicalSpecifications;
+ * otherwise the model has invented a specification, which is the exact failure
+ * the claim guard exists to stop. Matching normalises Persian/Arabic digits to
+ * Latin, Persian unit words to their English symbol, and trailing decimal
+ * zeroes, so "۲ مگاهرتز", "2 MHz" and "2.00 MHz" are one value.
+ */
+const UNIT_ALIASES: Record<string, string> = {
+  mhz: "mhz", "مگاهرتز": "mhz",
+  khz: "khz", "کیلوهرتز": "khz",
+  hz: "hz", "هرتز": "hz",
+  w: "w", "وات": "w",
+  kw: "kw", "کیلووات": "kw",
+  v: "v", "ولت": "v",
+  a: "a", "آمپر": "a",
+  "%": "percent", "درصد": "percent",
+  kg: "kg", "کیلوگرم": "kg",
+  g: "g", "گرم": "g",
+  cm: "cm", "سانتیمتر": "cm",
+  mm: "mm", "میلیمتر": "mm",
+  m: "m", "متر": "m",
+  h: "h", "ساعت": "h",
+  min: "min", "دقیقه": "min",
+  s: "s", "ثانیه": "s",
+};
+
+function measurementLatinDigits(value: string) {
+  return value
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+}
+
+function canonicalMeasurementNumber(raw: string) {
+  const parsed = Number(measurementLatinDigits(raw).replace(/,/g, ""));
+  return Number.isFinite(parsed) ? String(parsed) : null;
+}
+
+function canonicalMeasurementUnit(raw: string) {
+  const key = measurementLatinDigits(raw)
+    .toLocaleLowerCase("fa")
+    .replace(/‌/g, "")
+    .trim();
+  return UNIT_ALIASES[key] ?? null;
+}
+
+const MEASUREMENT_PATTERN =
+  /([0-9۰-۹٠-٩][0-9۰-۹٠-٩.,]*)\s*(%|[A-Za-z]{1,4}|[؀-ۿ‌]{2,12})/gu;
+
+function sentenceMeasurements(text: string) {
+  const found = new Set<string>();
+  for (const match of text.matchAll(MEASUREMENT_PATTERN)) {
+    const value = canonicalMeasurementNumber(match[1]);
+    const unit = canonicalMeasurementUnit(match[2]);
+    if (value && unit) found.add(value + " " + unit);
+  }
+  return found;
+}
+
+function groundedMeasurements(product?: ProductGrounding | null) {
+  const specs = product?.technicalSpecifications;
+  if (!specs || typeof specs !== "object") return new Set<string>();
+  const grounded = new Set<string>();
+  for (const raw of Object.values(specs as Record<string, unknown>)) {
+    for (const item of sentenceMeasurements(String(raw ?? ""))) grounded.add(item);
+  }
+  return grounded;
+}
+
 export function removeUnsupportedMedicalClaims(
   text: string,
   product?: ProductGrounding | null,
@@ -290,6 +361,16 @@ export function removeUnsupportedMedicalClaims(
       ) {
         removed.push(sentence.trim());
         return false;
+      }
+
+      // Every measurement asserted here must be backed by a verified spec.
+      const claimedMeasurements = sentenceMeasurements(sentence);
+      if (claimedMeasurements.size) {
+        const grounded = groundedMeasurements(product);
+        if ([...claimedMeasurements].some((item) => !grounded.has(item))) {
+          removed.push(sentence.trim());
+          return false;
+        }
       }
 
       return true;

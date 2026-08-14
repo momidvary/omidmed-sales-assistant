@@ -533,7 +533,7 @@ export default async function CustomerPage({
     supabase
       .from("invoices")
       .select(
-        "id,invoice_number,document_number,invoice_date,due_date,total_quantity,total_amount,cash_amount,check_amount,card_amount,account_balance_amount,account_balance_status,discount_amount,discount_percent,transaction_status",
+        "id,invoice_number,document_number,invoice_date,due_date,total_quantity,total_amount,cash_amount,check_amount,card_amount,discount_amount,discount_percent,transaction_status",
       )
       .eq("customer_id", id)
       .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
@@ -1536,20 +1536,6 @@ export default async function CustomerPage({
                       <b>{formatDate(invoice.due_date)}</b>
                     </span>
 
-                    <span>
-                      مانده همین فاکتور:{" "}
-                      <b>
-                        {formatMoney(
-                          invoice.account_balance_amount,
-                        )}{" "}
-                        (
-                        {balanceLabels[
-                          invoice.account_balance_status
-                        ] ??
-                          invoice.account_balance_status}
-                        )
-                      </b>
-                    </span>
                   </div>
 
                   {items.length ? (
