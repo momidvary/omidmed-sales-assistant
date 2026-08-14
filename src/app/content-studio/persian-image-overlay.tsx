@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   overlayFontSize,
@@ -60,10 +60,19 @@ export default function PersianImageOverlay({
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  // Re-seed the editable fields when the caller supplies different defaults.
+  // Done as an adjust-during-render with a previous-props sentinel rather than
+  // an effect: an effect would set state after paint, rendering one frame of
+  // the stale text and triggering a cascading re-render.
+  const [seededFrom, setSeededFrom] = useState({
+    headline: defaultHeadline,
+    cta: defaultCta,
+  });
+  if (seededFrom.headline !== defaultHeadline || seededFrom.cta !== defaultCta) {
+    setSeededFrom({ headline: defaultHeadline, cta: defaultCta });
     setHeadline(sanitizeOverlayText(defaultHeadline ?? "", 180));
     setCta(sanitizeOverlayText(defaultCta ?? "", 100));
-  }, [defaultHeadline, defaultCta]);
+  }
 
   async function renderOverlay() {
     const canvas = canvasRef.current;
