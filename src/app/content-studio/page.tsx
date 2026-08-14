@@ -43,7 +43,7 @@ import {
   type StoredWhatsAppPayload,
 } from "@/lib/content-studio/whatsapp-legacy";
 import { createClient } from "@/lib/supabase/server";
-import { parseTehranLocalDateTime } from "@/lib/tehran-time";
+import { parseTehranLocalDateTime, tehranDateRange } from "@/lib/tehran-time";
 import {
   detectMedicalDocumentMime,
   safeOriginalFilename,
@@ -1112,11 +1112,21 @@ export default async function ContentStudioPage({
     customer?: string;
     product?: string;
     sent?: string;
+    date_from?: string;
+    date_to?: string;
     catalog_product?: string;
   }>;
 }) {
   const params = await searchParams;
   const activeChannel: ContentChannel = params.channel === "whatsapp" ? "whatsapp" : "instagram";
+  // The content types this channel can actually hold. The filter must accept the
+  // same set the picker offers, or a WhatsApp-only type carried over in the query
+  // string would filter the Instagram history down to nothing and read as "empty".
+  const allowedContentTypes =
+    activeChannel === "whatsapp"
+      ? WHATSAPP_CONTENT_TYPES
+      : CONTENT_TYPES.filter((value) => !value.startsWith("whatsapp_") && value !== "sms");
+  const historyRange = tehranDateRange(params.date_from, params.date_to);
   const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
   const pageSize = 24;
   const from = (page - 1) * pageSize;
@@ -1136,13 +1146,21 @@ export default async function ContentStudioPage({
   if (params.status && ["draft", "pending_review", "approved", "published", "rejected"].includes(params.status)) {
     contentQuery = contentQuery.eq("status", params.status);
   }
-  if (params.content_type && CONTENT_TYPES.includes(params.content_type as never)) {
+  if (params.content_type && allowedContentTypes.includes(params.content_type as never)) {
     contentQuery = contentQuery.eq("content_type", params.content_type);
   }
   if (params.customer) contentQuery = contentQuery.eq("customer_id", params.customer);
   if (params.product) contentQuery = contentQuery.eq("product_id", params.product);
   if (params.sent === "yes") contentQuery = contentQuery.not("sent_at", "is", null);
   if (params.sent === "no") contentQuery = contentQuery.is("sent_at", null);
+  // Filtered in the database, not after paging: trimming the page in memory would
+  // leave the row count and page links describing the unfiltered history.
+  if (historyRange.start) {
+    contentQuery = contentQuery.gte("created_at", historyRange.start.toISOString());
+  }
+  if (historyRange.endExclusive) {
+    contentQuery = contentQuery.lt("created_at", historyRange.endExclusive.toISOString());
+  }
   const extendedContentResult = await contentQuery.range(from, from + pageSize - 1);
   const contentSchemaMissing = isMissingContentStudioSchemaColumn(
     extendedContentResult.error,
@@ -1441,10 +1459,12 @@ export default async function ContentStudioPage({
             <input type="hidden" name="channel" value={activeChannel} />
             <input name="q" defaultValue={params.q} placeholder="جست‌وجوی عنوان، موضوع یا متن" />
             <select name="status" defaultValue={params.status ?? ""}><option value="">همه وضعیت‌ها</option>{statusKeys.map((status) => <option value={status} key={status}>{statusLabels[status]}</option>)}</select>
-            <select name="content_type" defaultValue={params.content_type ?? ""}><option value="">همه انواع محتوا</option>{(activeChannel === "whatsapp" ? WHATSAPP_CONTENT_TYPES : CONTENT_TYPES.filter((value) => !value.startsWith("whatsapp_") && value !== "sms")).map((type) => <option value={type} key={type}>{whatsappTypeLabels[type] || contentTypeLabels[type] || type}</option>)}</select>
+            <select name="content_type" defaultValue={params.content_type ?? ""}><option value="">همه انواع محتوا</option>{allowedContentTypes.map((type) => <option value={type} key={type}>{whatsappTypeLabels[type] || contentTypeLabels[type] || type}</option>)}</select>
             <select name="product" defaultValue={params.product ?? ""}><option value="">همه محصولات</option>{products.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select>
             <select name="customer" defaultValue={params.customer ?? ""}><option value="">همه مشتریان</option>{customers.map((customer) => <option value={customer.id} key={customer.id}>{customer.name}</option>)}</select>
             <select name="sent" defaultValue={params.sent ?? ""}><option value="">ارسال‌شده و نشده</option><option value="yes">ارسال‌شده</option><option value="no">ارسال‌نشده</option></select>
+            <label>از تاریخ<input type="date" name="date_from" defaultValue={params.date_from ?? ""} /></label>
+            <label>تا تاریخ<input type="date" name="date_to" defaultValue={params.date_to ?? ""} /></label>
             <button type="submit">اعمال فیلتر</button>
           </form>
           {items.length ? (
