@@ -1,5 +1,6 @@
 const TEHRAN_TIME_ZONE = "Asia/Tehran";
 const LOCAL_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
+const LOCAL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 type DateTimeParts = {
   year: number;
@@ -120,4 +121,40 @@ export function parseTehranLocalDateTime(value: string): Date | null {
 
 export function tehranDateTimeToIso(value: string) {
   return parseTehranLocalDateTime(value)?.toISOString() ?? null;
+}
+
+function tehranDayStart(value: string): Date | null {
+  const match = value.trim().match(LOCAL_DATE_PATTERN);
+  if (!match) return null;
+  return parseTehranLocalDateTime(`${match[1]}-${match[2]}-${match[3]}T00:00`);
+}
+
+function nextCalendarDay(value: string): string | null {
+  const match = value.trim().match(LOCAL_DATE_PATTERN);
+  if (!match) return null;
+  const probe = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (Number.isNaN(probe.getTime())) return null;
+  probe.setUTCDate(probe.getUTCDate() + 1);
+  return probe.toISOString().slice(0, 10);
+}
+
+/**
+ * Turns a pair of Tehran calendar dates into the half-open instant range
+ * [start, endExclusive) that covers those whole days.
+ *
+ * The days are resolved in Asia/Tehran rather than the host zone, which on
+ * Vercel is UTC — three and a half hours behind, so a UTC reading of "today"
+ * would drop the evening of the last day and include the small hours of the
+ * day before. The end is the start of the day after `to`, so the range is
+ * compared with `< endExclusive` and covers `to` itself completely without
+ * depending on the timestamp's precision.
+ *
+ * Either side may be null, meaning that end of the range is unbounded.
+ */
+export function tehranDateRange(from?: string | null, to?: string | null) {
+  const nextAfterTo = to ? nextCalendarDay(to) : null;
+  return {
+    start: from ? tehranDayStart(from) : null,
+    endExclusive: nextAfterTo ? tehranDayStart(nextAfterTo) : null,
+  };
 }
