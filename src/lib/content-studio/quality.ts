@@ -115,7 +115,9 @@ const unsupportedClaimPatterns = [
 ];
 
 const explicitPricePattern =
-  /([0-9۰-۹٠-٩][0-9۰-۹٠-٩٬,]*)(?:\s*(هزار|میلیون|میلیارد))?\s*(?:تومان|تومن|ریال)/iu;
+  /([0-9۰-۹٠-٩][0-9۰-۹٠-٩٬,]*)(?:[.٫]([0-9۰-۹٠-٩]+))?(?:\s*(هزار|میلیون|میلیارد))?\s*(تومان|تومن|ریال)/giu;
+
+const RIAL_PER_TOMAN = BigInt(10);
 
 const inventoryClaimPattern =
   /(?:ناموجود|موجودی\s+(?:محدود|کافی|رو\s+به\s+اتمام)|رو\s+به\s+اتمام|در\s+انبار|آماده\s+ارسال|موجود\s+(?:است|داریم)|سفارشی|پس\s+از\s+سفارش)/iu;
@@ -137,53 +139,105 @@ function normalizeDigits(value: string) {
     .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 1632));
 }
 
+/**
+ * The stored price as whole Toman, or null when it cannot ground anything.
+ *
+ * Supabase returns `numeric` as a string, so a five million Toman price arrives
+ * as "5000000.00". The decimal separator must be parsed rather than stripped —
+ * stripping it reads that value as 500000000, a hundredfold error that rejects
+ * the one price the copy is allowed to state. A non-zero fractional part is a
+ * sub-Toman price that no whole-Toman claim can restate, so it grounds nothing.
+ */
 function canonicalGroundedPrice(value: ProductGrounding["price"]) {
   if (value === null || value === undefined || value === "") return null;
-  const normalized = normalizeDigits(String(value));
-  const digits = normalized.replace(/[^0-9]/g, "");
-  if (!digits) return null;
-  try {
-    return BigInt(digits);
-  } catch {
-    return null;
-  }
-}
-
-function claimedPrice(sentence: string) {
-  const match = sentence.match(explicitPricePattern);
+  const match = normalizeDigits(String(value)).match(/^\s*([0-9][0-9٬,]*)(?:[.٫]([0-9]+))?\s*$/u);
   if (!match) return null;
-  const digits = normalizeDigits(match[1]).replace(/[^0-9]/g, "");
-  if (!digits) return null;
-  const multiplier =
-    match[2] === "هزار"
-      ? BigInt(1_000)
-      : match[2] === "میلیون"
-        ? BigInt(1_000_000)
-        : match[2] === "میلیارد"
-          ? BigInt(1_000_000_000)
-          : BigInt(1);
+  const whole = match[1].replace(/[^0-9]/g, "");
+  if (!whole) return null;
+  if (/[1-9]/.test(match[2] ?? "")) return null;
   try {
-    return BigInt(digits) * multiplier;
+    return BigInt(whole);
   } catch {
     return null;
   }
 }
 
+/**
+ * Every explicit price a sentence states, each normalised to whole Toman.
+ *
+ * Prices are collected rather than sampled: a sentence that pairs the grounded
+ * price with an invented one is still selling the invented one, so checking
+ * only the first match would approve it. Rial is converted at ten to the Toman
+ * so an accurate restatement of the same amount reads as the same amount.
+ *
+ * A null entry marks a price that is not a whole number of Toman — a fractional
+ * Rial, or a magnitude that does not divide evenly. Those can never equal a
+ * grounded price, and are kept in the list so they read as a mismatch; dropping
+ * them would let a fabricated figure through the guard unchecked.
+ */
+function claimedPrices(sentence: string) {
+  const claims: (bigint | null)[] = [];
+  for (const match of sentence.matchAll(explicitPricePattern)) {
+    const whole = normalizeDigits(match[1]).replace(/[^0-9]/g, "");
+    const fraction = match[2] ? normalizeDigits(match[2]).replace(/[^0-9]/g, "") : "";
+    if (!whole) continue;
+    const multiplier =
+      match[3] === "هزار"
+        ? BigInt(1_000)
+        : match[3] === "میلیون"
+          ? BigInt(1_000_000)
+          : match[3] === "میلیارد"
+            ? BigInt(1_000_000_000)
+            : BigInt(1);
+    const scale = BigInt("1" + "0".repeat(fraction.length));
+    const divisor = match[4] === "ریال" ? scale * RIAL_PER_TOMAN : scale;
+    try {
+      const value = BigInt(whole + fraction) * multiplier;
+      claims.push(value % divisor === BigInt(0) ? value / divisor : null);
+    } catch {
+      claims.push(null);
+    }
+  }
+  return claims;
+}
+
+/**
+ * Each recognised phrase, with the stock states it can truthfully describe.
+ * "موجود" is matched only as an assertion of availability, never as the tail of
+ * "ناموجود", which asserts the opposite.
+ */
+const INVENTORY_ASSERTIONS: { pattern: RegExp; statuses: string[] }[] = [
+  { pattern: /ناموجود/iu, statuses: ["out_of_stock"] },
+  { pattern: /(?:سفارشی|پس\s+از\s+سفارش)/iu, statuses: ["made_to_order"] },
+  { pattern: /(?:محدود|رو\s+به\s+اتمام)/iu, statuses: ["low_stock"] },
+  {
+    pattern: /(?:(?<!نا)موجود\s+(?:است|داریم)|موجودی\s+کافی|در\s+انبار|آماده\s+ارسال)/iu,
+    statuses: ["in_stock", "low_stock"],
+  },
+];
+
+/**
+ * Whether a sentence's inventory wording is true of the verified stock status.
+ *
+ * Every phrase the sentence uses narrows the set of states it could be
+ * describing, so "موجود است" alongside "موجودی محدود" still resolves to low
+ * stock. Copy that claims a product is both in stock and out of stock narrows
+ * that set to nothing and is rejected whatever the real status is — one half of
+ * it is false either way. Stopping at the first phrase, as this once did, would
+ * approve the contradiction on the strength of whichever half happened to match.
+ */
 function inventoryClaimSupported(sentence: string, status: string | null | undefined) {
   const normalized = compactText(sentence, 500).toLocaleLowerCase("fa");
   const inventoryStatus = compactText(status, 40).toLocaleLowerCase("en");
   if (!inventoryStatus || inventoryStatus === "unknown") return false;
-  if (/ناموجود/iu.test(normalized)) return inventoryStatus === "out_of_stock";
-  if (/(?:سفارشی|پس\s+از\s+سفارش)/iu.test(normalized)) {
-    return inventoryStatus === "made_to_order";
+  let candidates: string[] | null = null;
+  for (const assertion of INVENTORY_ASSERTIONS) {
+    if (!assertion.pattern.test(normalized)) continue;
+    candidates = candidates
+      ? candidates.filter((candidate) => assertion.statuses.includes(candidate))
+      : [...assertion.statuses];
   }
-  if (/(?:محدود|رو\s+به\s+اتمام)/iu.test(normalized)) {
-    return inventoryStatus === "low_stock";
-  }
-  if (/(?:موجود|در\s+انبار|آماده\s+ارسال)/iu.test(normalized)) {
-    return inventoryStatus === "in_stock" || inventoryStatus === "low_stock";
-  }
-  return false;
+  return candidates !== null && candidates.includes(inventoryStatus);
 }
 
 /**
@@ -335,7 +389,10 @@ export function removeUnsupportedMedicalClaims(
 
   const removed: string[] = [];
   const safeSentences = text
-    .split(/(?<=[.!؟\n])/u)
+    // A period between digits is a decimal point, not a sentence end. Splitting
+    // there would cut "۵.۵ میلیون تومان" into a fragment reading five million,
+    // and the guard would compare the wrong number against the grounded price.
+    .split(/(?<=[.!؟\n])(?![0-9۰-۹٠-٩])/u)
     .filter((sentence) => {
       const matched = unsupportedClaimPatterns.find((pattern) => pattern.test(sentence));
       if (matched) {
@@ -349,8 +406,12 @@ export function removeUnsupportedMedicalClaims(
         }
       }
 
-      const price = claimedPrice(sentence);
-      if (price !== null && (groundedPrice === null || price !== groundedPrice)) {
+      const prices = claimedPrices(sentence);
+      if (
+        prices.length &&
+        (groundedPrice === null ||
+          prices.some((price) => price === null || price !== groundedPrice))
+      ) {
         removed.push(sentence.trim());
         return false;
       }
@@ -376,6 +437,27 @@ export function removeUnsupportedMedicalClaims(
       return true;
     });
   return { text: safeSentences.join("").trim(), removed };
+}
+
+/**
+ * Purposes whose copy is about a specific open transaction with this customer,
+ * and so cannot be written without their financial standing.
+ *
+ * The CRM block is sent to a third-party model on every generation, so what goes
+ * in it is a disclosure decision, not a formatting one. A customer's outstanding
+ * balance, invoiced total and open quote say nothing useful about how to teach
+ * them to use a device, and including them anyway invites the model to work them
+ * into copy that had no business mentioning money. Everything outside this list
+ * gets the relationship context alone.
+ */
+const FINANCIAL_CONTEXT_GOALS = ["quote_follow_up", "order"];
+const FINANCIAL_CONTEXT_TYPES = ["whatsapp_quote_follow_up", "price_follow_up"];
+
+function needsFinancialContext(goal: string, contentType: string) {
+  return (
+    FINANCIAL_CONTEXT_GOALS.includes(compactText(goal, 80)) ||
+    FINANCIAL_CONTEXT_TYPES.includes(compactText(contentType, 80))
+  );
 }
 
 export function containsGenericOpening(text: string) {
@@ -440,13 +522,17 @@ export function buildGroundedBrief(input: {
           purchased_products: sanitizeList(customer.purchasedProducts),
           interests: sanitizeList(customer.interests),
           last_contact: compactText(customer.lastContact, 120),
-          opportunity: compactText(customer.opportunity, 300),
-          quote: compactText(customer.quote, 300),
-          actual_invoiced_sales_toman: customer.actualSales ?? null,
-          holoo_balance_toman: customer.balanceAmount ?? null,
-          holoo_balance_status: customer.balanceStatus ?? "unknown",
           commercial_priority: customer.commercialPriority ?? null,
           action_urgency: customer.urgency ?? null,
+          ...(needsFinancialContext(input.goal, input.contentType)
+            ? {
+                opportunity: compactText(customer.opportunity, 300),
+                quote: compactText(customer.quote, 300),
+                actual_invoiced_sales_toman: customer.actualSales ?? null,
+                holoo_balance_toman: customer.balanceAmount ?? null,
+                holoo_balance_status: customer.balanceStatus ?? "unknown",
+              }
+            : {}),
         })
       : "شخصی‌سازی مشتری درخواست نشده است.",
     "[BRAND_PROFILE]",
