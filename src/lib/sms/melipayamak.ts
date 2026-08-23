@@ -1,6 +1,16 @@
 const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
 const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 
+export class SmsProviderError extends Error {
+  constructor(
+    message: string,
+    readonly ambiguous = false,
+  ) {
+    super(message);
+    this.name = "SmsProviderError";
+  }
+}
+
 function latinDigits(value: string) {
   return value
     .replace(/[۰-۹]/g, (digit) => String(PERSIAN_DIGITS.indexOf(digit)))
@@ -74,6 +84,19 @@ export function personalizeSmsTemplate(
     .trim();
 }
 
+export function ensureSingleSmsOptOut(value: string) {
+  // The opt-out may already be present written with Persian (۱۱) or
+  // Arabic-Indic (١١) digits — the natural way a Persian speaker or an AI
+  // suggestion types it. Matching Latin digits alone left the original in
+  // place and appended a second one, so the message shipped with two opt-out
+  // instructions and burned an extra SMS segment.
+  const withoutDuplicates = value
+    .replace(/(?:\s*لغو\s*[1۱١][1۱١]\s*)+/giu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${withoutDuplicates}\nلغو11`.trim();
+}
+
 type ProviderJson = Record<string, unknown>;
 
 function providerBoolean(value: unknown) {
@@ -139,7 +162,7 @@ async function postToProvider(
     }
 
     if (!response.ok) {
-      throw new Error(
+      throw new SmsProviderError(
         providerStatus(
           json,
           `خطای ارتباط با ملی پیامک؛ کد HTTP ${response.status}`,
@@ -150,12 +173,16 @@ async function postToProvider(
     return json;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(
+      throw new SmsProviderError(
         "پاسخ ملی پیامک بیش از ۳۰ ثانیه طول کشید. دوباره تلاش کن.",
+        true,
       );
     }
-
-    throw error;
+    if (error instanceof SmsProviderError) throw error;
+    throw new SmsProviderError(
+      "نتیجه ارتباط با ملی پیامک مشخص نشد؛ برای جلوگیری از پیام تکراری ارسال خودکار تکرار نشد.",
+      true,
+    );
   } finally {
     clearTimeout(timeout);
   }

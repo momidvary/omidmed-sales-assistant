@@ -15,16 +15,7 @@ export type AccountingAttachment = {
   created_at: string;
 };
 
-const ALLOWED = ["image/png", "image/jpeg", "application/pdf"];
 const MAX = 10 * 1024 * 1024;
-
-function extension(file: File) {
-  const fromName = file.name.split(".").pop()?.toLowerCase();
-  if (fromName && /^[a-z0-9]{2,5}$/.test(fromName)) return fromName;
-  if (file.type === "image/png") return "png";
-  if (file.type === "image/jpeg") return "jpg";
-  return "pdf";
-}
 
 export default function AccountingAttachmentUploader({
   entityType,
@@ -59,61 +50,73 @@ export default function AccountingAttachmentUploader({
     event.preventDefault();
     setMessage(null);
     if (!selected) return setMessage("ابتدا فایل را انتخاب کن.");
-    if (!ALLOWED.includes(selected.type)) return setMessage("فقط PNG، JPG و PDF مجاز است.");
-    if (selected.size > MAX) return setMessage("حجم فایل باید کمتر از ۱۰ مگابایت باشد.");
+    if (selected.size < 5 || selected.size > MAX) {
+      return setMessage("حجم فایل معتبر نیست؛ حداکثر ۱۰ مگابایت مجاز است.");
+    }
 
     setBusy(true);
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
-    if (!userId) {
+    try {
+      const payload = new FormData();
+      payload.set("file", selected);
+      payload.set("entityType", entityType);
+      payload.set("entityId", entityId);
+      const response = await fetch("/api/accounting/attachments", {
+        method: "POST",
+        body: payload,
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        file?: AccountingAttachment;
+        message?: string;
+      };
+      if (!response.ok || !result.ok || !result.file) {
+        setMessage(result.message || "بارگذاری انجام نشد. شناسه خطا: ATTACHMENT-UPLOAD");
+        return;
+      }
+
+      setFiles((current) => [result.file as AccountingAttachment, ...current]);
+      setSelected(null);
+      const input = document.getElementById(`attachment-${entityId}`) as HTMLInputElement | null;
+      if (input) input.value = "";
+      setMessage("فایل با موفقیت ذخیره شد.");
+    } catch {
+      setMessage("ارتباط برای ثبت پیوست کامل نشد. شناسه خطا: ATTACHMENT-NETWORK");
+    } finally {
       setBusy(false);
-      return setMessage("نشست ورود معتبر نیست.");
     }
-
-    const path = `${userId}/${entityType}/${entityId}/${crypto.randomUUID()}.${extension(selected)}`;
-    const { error: uploadError } = await supabase.storage
-      .from("accounting-files")
-      .upload(path, selected, { contentType: selected.type, upsert: false });
-    if (uploadError) {
-      setBusy(false);
-      return setMessage(`بارگذاری انجام نشد: ${uploadError.message}`);
-    }
-
-    const { data, error } = await supabase
-      .from("accounting_attachments")
-      .insert({
-        entity_type: entityType,
-        entity_id: entityId,
-        storage_path: path,
-        original_name: selected.name,
-        mime_type: selected.type,
-        size_bytes: selected.size,
-      })
-      .select("id,entity_type,entity_id,storage_path,original_name,mime_type,size_bytes,created_at")
-      .single();
-
-    if (error || !data) {
-      await supabase.storage.from("accounting-files").remove([path]);
-      setBusy(false);
-      return setMessage(`ثبت فایل انجام نشد: ${error?.message ?? "خطای نامشخص"}`);
-    }
-
-    setFiles((current) => [data as AccountingAttachment, ...current]);
-    setSelected(null);
-    const input = document.getElementById(`attachment-${entityId}`) as HTMLInputElement | null;
-    if (input) input.value = "";
-    setBusy(false);
-    setMessage("فایل با موفقیت ذخیره شد.");
   }
 
   async function remove(file: AccountingAttachment) {
     if (!window.confirm("این فایل حذف شود؟")) return;
     setBusy(true);
-    const { error } = await supabase.from("accounting_attachments").delete().eq("id", file.id);
-    if (!error) await supabase.storage.from("accounting-files").remove([file.storage_path]);
-    if (error) setMessage(`حذف انجام نشد: ${error.message}`);
-    else setFiles((current) => current.filter((item) => item.id !== file.id));
-    setBusy(false);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/accounting/attachments", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: file.id }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        cleanupPending?: boolean;
+        message?: string;
+      };
+      if (!response.ok || !result.ok) {
+        setMessage(result.message || "حذف فایل انجام نشد. شناسه خطا: ATTACHMENT-DELETE");
+        return;
+      }
+      setFiles((current) => current.filter((item) => item.id !== file.id));
+      setMessage(
+        result.message ||
+          (result.cleanupPending
+            ? "پیوست از رکورد حذف شد؛ پاک‌سازی Storage بعداً انجام می‌شود."
+            : "فایل حذف شد."),
+      );
+    } catch {
+      setMessage("ارتباط برای حذف پیوست کامل نشد. شناسه خطا: ATTACHMENT-DELETE-NETWORK");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

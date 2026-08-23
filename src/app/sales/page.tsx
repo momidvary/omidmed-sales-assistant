@@ -6,7 +6,6 @@ import AppShell, { Icon } from "@/components/app-shell";
 import SingleSmsComposer from "@/components/sms/single-sms-composer";
 import {
   addTehranDaysAtTen,
-  nextOpportunityStep,
   normalizePhoneForLink,
 } from "@/lib/campaigns/constants";
 import { createClient } from "@/lib/supabase/server";
@@ -94,7 +93,7 @@ const columns: Array<{
   },
   {
     key: "won",
-    title: "سفارش شد",
+    title: "توافق/سفارش CRM ثبت شد",
     subtitle: "فرصت‌های تبدیل‌شده به خرید",
   },
   {
@@ -177,7 +176,7 @@ function nextProspectStage(stage: string | null) {
 
   return {
     stage: "converted",
-    label: "ثبت سفارش",
+    label: "ثبت سفارش CRM (بدون فاکتور)",
     outcome: "order_placed",
     nextFollowupAt: null,
   };
@@ -190,68 +189,20 @@ async function advanceProspect(formData: FormData) {
     formData.get("customer_id") ?? "",
   ).trim();
   const action = String(formData.get("action") ?? "").trim();
+  const requestId = String(formData.get("request_id") ?? "").trim();
 
-  if (!customerId || !["next", "lost"].includes(action)) {
+  if (!customerId || !["next", "lost"].includes(action) || !/^[0-9a-f-]{36}$/i.test(requestId)) {
     redirect("/sales?error=invalid");
   }
 
   const supabase = await createClient();
-  const { data: customer, error } = await supabase
-    .from("customers")
-    .select("status,lead_stage,potential_value")
-    .eq("id", customerId)
-    .single();
-
-  if (error || !customer) {
-    redirect("/sales?error=missing");
-  }
-
-  const transition =
-    action === "lost"
-      ? {
-          stage: "lost",
-          outcome: "lost",
-          nextFollowupAt: null,
-          label: "از دست رفته",
-        }
-      : nextProspectStage(customer.lead_stage);
-
-  const { error: followupError } = await supabase
-    .from("followups")
-    .insert({
-      customer_id: customerId,
-      channel: "phone",
-      outcome: transition.outcome,
-      notes: `تغییر مرحله از قیف فروش: ${transition.label}`,
-      next_followup_at: transition.nextFollowupAt,
-      potential_value: customer.potential_value,
-    });
-
-  if (followupError) {
-    redirect("/sales?error=followup");
-  }
-
-  const update: Record<string, unknown> = {
-    lead_stage: transition.stage,
-    next_followup_at: transition.nextFollowupAt,
-  };
-
-  if (transition.stage === "converted") {
-    update.status = "active";
-  } else if (transition.stage === "lost") {
-    update.status = "lost";
-  } else {
-    update.status = "prospect";
-  }
-
-  const { error: updateError } = await supabase
-    .from("customers")
-    .update(update)
-    .eq("id", customerId);
-
-  if (updateError) {
-    redirect("/sales?error=save");
-  }
+  const { data, error } = await supabase.rpc("transition_crm_prospect", {
+    p_request_id: requestId,
+    p_customer_id: customerId,
+    p_action: action,
+  });
+  if (error) redirect("/sales?error=save");
+  const transition = data as { stage?: string } | null;
 
   revalidatePath("/");
   revalidatePath("/sales");
@@ -259,7 +210,7 @@ async function advanceProspect(formData: FormData) {
   revalidatePath("/customers");
   revalidatePath(`/customers/${customerId}`);
 
-  redirect(`/sales?saved=${transition.stage}`);
+  redirect(`/sales?saved=${transition?.stage ?? action}`);
 }
 
 async function advanceOpportunity(formData: FormData) {
@@ -272,107 +223,30 @@ async function advanceOpportunity(formData: FormData) {
     formData.get("customer_id") ?? "",
   ).trim();
   const action = String(formData.get("action") ?? "").trim();
+  const requestId = String(formData.get("request_id") ?? "").trim();
 
   if (
     !opportunityId ||
     !customerId ||
-    !["next", "won", "lost", "hold"].includes(action)
+    !["next", "won", "lost", "hold"].includes(action) ||
+    !/^[0-9a-f-]{36}$/i.test(requestId)
   ) {
     redirect("/sales?error=invalid");
   }
 
   const supabase = await createClient();
-  const { data: opportunity, error } = await supabase
-    .from("sales_opportunities")
-    .select("status,stage,estimated_value")
-    .eq("id", opportunityId)
-    .single();
-
-  if (error || !opportunity) {
-    redirect("/sales?error=missing");
-  }
-
-  const now = new Date().toISOString();
-  let status = opportunity.status;
-  let stage = opportunity.stage;
-  let nextFollowupAt: string | null = null;
-  let outcome = "follow_up_later";
-  let notes = "پیگیری مرحله بعد از قیف فروش.";
-
-  if (action === "next") {
-    const next = nextOpportunityStep(opportunity.stage);
-    status = "open";
-    stage = next.stage;
-    nextFollowupAt = next.nextFollowupAt;
-  } else if (action === "won") {
-    status = "won";
-    outcome = "order_placed";
-    notes = "فرصت فروش از قیف به سفارش تبدیل شد.";
-  } else if (action === "lost") {
-    status = "lost";
-    outcome = "lost";
-    notes = "فرصت فروش از قیف خارج و از دست رفته ثبت شد.";
-  } else {
-    status = "on_hold";
-    outcome = "no_need";
-    nextFollowupAt = addTehranDaysAtTen(30);
-    notes = "فرصت فروش برای ۳۰ روز در حالت تعلیق قرار گرفت.";
-  }
-
-  const { error: updateError } = await supabase
-    .from("sales_opportunities")
-    .update({
-      status,
-      stage,
-      last_contact_at: now,
-      next_followup_at: nextFollowupAt,
-      final_value:
-        action === "won"
-          ? opportunity.estimated_value
-          : null,
-      lost_reason: action === "lost" ? "other" : null,
-      notes,
-    })
-    .eq("id", opportunityId);
-
-  if (updateError) {
-    redirect("/sales?error=save");
-  }
-
-  const { error: followupError } = await supabase
-    .from("followups")
-    .insert({
-      customer_id: customerId,
-      channel: "phone",
-      outcome,
-      notes,
-      next_followup_at: nextFollowupAt,
-      potential_value: opportunity.estimated_value,
-      opportunity_id: opportunityId,
-    });
-
-  if (followupError) {
-    redirect("/sales?error=followup");
-  }
-
-  const customerUpdate: Record<string, unknown> = {
-    next_followup_at: nextFollowupAt,
-  };
-
-  if (action === "won") {
-    customerUpdate.status = "active";
-    customerUpdate.lead_stage = "converted";
-  } else if (action === "lost") {
-    customerUpdate.status = "lost";
-    customerUpdate.lead_stage = "lost";
-  } else if (action === "next") {
-    customerUpdate.lead_stage = "decision";
-  }
-
-  await supabase
-    .from("customers")
-    .update(customerUpdate)
-    .eq("id", customerId);
+  const { error } = await supabase.rpc("transition_sales_opportunity", {
+    p_request_id: requestId,
+    p_opportunity_id: opportunityId,
+    p_action: action,
+    p_value: null,
+    p_lost_reason: action === "lost" ? "other" : null,
+    p_notes:
+      action === "won"
+        ? "توافق/سفارش در CRM ثبت شد؛ فاکتور حسابداری ایجاد نشده است."
+        : null,
+  });
+  if (error) redirect("/sales?error=save");
 
   revalidatePath("/");
   revalidatePath("/sales");
@@ -381,6 +255,44 @@ async function advanceOpportunity(formData: FormData) {
   revalidatePath(`/customers/${customerId}`);
 
   redirect(`/sales?saved=${action}`);
+}
+
+async function fetchAllPipelineCustomers(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+) {
+  const rows: CustomerRow[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("customer_crm_summary")
+      .select(
+        "id,name,phone,city,status,priority,lead_stage,potential_value,total_sales,next_followup_at,created_at",
+      )
+      .is("archived_at", null)
+      .range(offset, offset + 999);
+    if (error) return { rows, failed: true };
+    const page = (data ?? []) as CustomerRow[];
+    rows.push(...page);
+    if (page.length < 1000) return { rows, failed: false };
+  }
+}
+
+async function fetchAllPipelineOpportunities(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+) {
+  const rows: OpportunityRow[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("sales_opportunities")
+      .select(
+        "id,customer_id,status,stage,product_interest,quoted_at,last_contact_at,next_followup_at,estimated_value,final_value,notes,created_at",
+      )
+      .order("created_at", { ascending: false })
+      .range(offset, offset + 999);
+    if (error) return { rows, failed: true };
+    const page = (data ?? []) as OpportunityRow[];
+    rows.push(...page);
+    if (page.length < 1000) return { rows, failed: false };
+  }
 }
 
 export default async function SalesPipelinePage({
@@ -400,25 +312,12 @@ export default async function SalesPipelinePage({
 
   const [customersResult, opportunitiesResult] =
     await Promise.all([
-      supabase
-        .from("customer_crm_summary")
-        .select(
-          "id,name,phone,city,status,priority,lead_stage,potential_value,total_sales,next_followup_at,created_at",
-        )
-        .is("archived_at", null)
-        .limit(2500),
-      supabase
-        .from("sales_opportunities")
-        .select(
-          "id,customer_id,status,stage,product_interest,quoted_at,last_contact_at,next_followup_at,estimated_value,final_value,notes,created_at",
-        )
-        .order("created_at", { ascending: false })
-        .limit(2500),
+      fetchAllPipelineCustomers(supabase),
+      fetchAllPipelineOpportunities(supabase),
     ]);
 
-  const customers = (customersResult.data ?? []) as CustomerRow[];
-  const opportunities = (opportunitiesResult.data ??
-    []) as OpportunityRow[];
+  const customers = customersResult.rows;
+  const opportunities = opportunitiesResult.rows;
 
   const customerMap = new Map(
     customers.map((customer) => [customer.id, customer]),
@@ -602,11 +501,9 @@ export default async function SalesPipelinePage({
         <div className={styles.error}>{errorMessage}</div>
       ) : null}
 
-      {customersResult.error || opportunitiesResult.error ? (
+      {customersResult.failed || opportunitiesResult.failed ? (
         <div className={styles.error}>
-          خواندن قیف فروش انجام نشد:{" "}
-          {customersResult.error?.message ||
-            opportunitiesResult.error?.message}
+          خواندن قیف فروش انجام نشد. شناسه خطا: SALES_PIPELINE_READ_FAILED
         </div>
       ) : null}
 
@@ -655,7 +552,7 @@ export default async function SalesPipelinePage({
         </article>
 
         <article>
-          <span>سفارش‌های تبدیل‌شده</span>
+          <span>سفارش‌های CRM تبدیل‌شده (غیرفاکتوری)</span>
           <strong>
             {number.format(wonOpportunities.length)}
           </strong>
@@ -705,7 +602,7 @@ export default async function SalesPipelinePage({
               </div>
 
               <div className={styles.cards}>
-                {columnItems.slice(0, 40).map((item) => {
+                {columnItems.map((item) => {
                   const phoneLink = normalizePhoneForLink(
                     item.customer.phone,
                   );
@@ -820,6 +717,7 @@ export default async function SalesPipelinePage({
                           <>
                             {item.column !== "lost" ? (
                               <form action={advanceProspect}>
+                                <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                                 <input
                                   type="hidden"
                                   name="customer_id"
@@ -838,6 +736,7 @@ export default async function SalesPipelinePage({
 
                             {item.column !== "lost" ? (
                               <form action={advanceProspect}>
+                                <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                                 <input
                                   type="hidden"
                                   name="customer_id"
@@ -861,6 +760,7 @@ export default async function SalesPipelinePage({
                           item.column !== "lost" ? (
                           <>
                             <form action={advanceOpportunity}>
+                              <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                               <input
                                 type="hidden"
                                 name="opportunity_id"
@@ -882,6 +782,7 @@ export default async function SalesPipelinePage({
                             </form>
 
                             <form action={advanceOpportunity}>
+                              <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                               <input
                                 type="hidden"
                                 name="opportunity_id"
@@ -901,11 +802,12 @@ export default async function SalesPipelinePage({
                                 className={styles.wonAction}
                                 type="submit"
                               >
-                                سفارش شد
+                                ثبت توافق CRM؛ بدون ایجاد فاکتور
                               </button>
                             </form>
 
                             <form action={advanceOpportunity}>
+                              <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                               <input
                                 type="hidden"
                                 name="opportunity_id"
@@ -927,6 +829,7 @@ export default async function SalesPipelinePage({
                             </form>
 
                             <form action={advanceOpportunity}>
+                              <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                               <input
                                 type="hidden"
                                 name="opportunity_id"

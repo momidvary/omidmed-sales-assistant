@@ -12,6 +12,8 @@ import {
 import styles from "./campaigns.module.css";
 
 const number = new Intl.NumberFormat("fa-IR");
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type TargetCustomer = {
   id: string;
@@ -67,6 +69,19 @@ function cleanText(formData: FormData, key: string, maxLength: number) {
   return String(formData.get(key) ?? "").trim().slice(0, maxLength);
 }
 
+async function collectAllRows<T>(
+  load: (from: number, to: number) => Promise<{ data: T[] | null; error: unknown }>,
+) {
+  const rows: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const result = await load(from, from + 999);
+    if (result.error) return { data: rows, error: result.error };
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (page.length < 1000) return { data: rows, error: null };
+  }
+}
+
 async function createCampaign(formData: FormData) {
   "use server";
 
@@ -78,6 +93,7 @@ async function createCampaign(formData: FormData) {
   const priorityFilter = cleanText(formData, "priority_filter", 20) || "all";
   const messageTemplate = cleanText(formData, "message_template", 3000);
   const notes = cleanText(formData, "notes", 1500);
+  const requestId = cleanText(formData, "request_id", 80);
   const minDaysInactive = Math.max(
     0,
     Math.min(3650, Number(formData.get("min_days_inactive") ?? 0) || 0),
@@ -97,7 +113,8 @@ async function createCampaign(formData: FormData) {
     !name ||
     !validTypes.has(campaignType) ||
     !validChannels.has(channel) ||
-    !validPriorities.has(priorityFilter)
+    !validPriorities.has(priorityFilter) ||
+    !uuidPattern.test(requestId)
   ) {
     redirect("/campaigns?error=invalid");
   }
@@ -106,11 +123,18 @@ async function createCampaign(formData: FormData) {
   let eligibleIds: Set<string> | null = null;
 
   if (campaignType === "price_followup") {
-    const { data: opportunities, error } = await supabase
-      .from("sales_opportunities")
-      .select("customer_id")
-      .in("status", ["open", "on_hold"])
-      .limit(3000);
+    const { data: opportunities, error } = await collectAllRows<{ customer_id: string }>(
+      (from, to) =>
+        supabase
+          .from("sales_opportunities")
+          .select("customer_id")
+          .in("status", ["open", "on_hold"])
+          .order("id")
+          .range(from, to) as unknown as Promise<{
+            data: Array<{ customer_id: string }> | null;
+            error: unknown;
+          }>,
+    );
 
     if (error) redirect("/campaigns?error=database");
     eligibleIds = new Set<string>((opportunities ?? []).map((row: { customer_id: string }) => row.customer_id));
@@ -118,11 +142,18 @@ async function createCampaign(formData: FormData) {
 
   if (targetProduct) {
     const safeProduct = targetProduct.replace(/[%_]/g, "");
-    const { data: products, error } = await supabase
-      .from("customer_product_summary")
-      .select("customer_id")
-      .ilike("product_name", `%${safeProduct}%`)
-      .limit(10000);
+    const { data: products, error } = await collectAllRows<{ customer_id: string }>(
+      (from, to) =>
+        supabase
+          .from("customer_product_summary")
+          .select("customer_id")
+          .ilike("product_name", `%${safeProduct}%`)
+          .order("customer_id")
+          .range(from, to) as unknown as Promise<{
+            data: Array<{ customer_id: string }> | null;
+            error: unknown;
+          }>,
+    );
 
     if (error) redirect("/campaigns?error=product");
     const productIds = new Set<string>((products ?? []).map((row: { customer_id: string }) => row.customer_id));
@@ -131,26 +162,24 @@ async function createCampaign(formData: FormData) {
       : productIds;
   }
 
-  let customerQuery = supabase
-    .from("customer_sales_summary")
-    .select("id,name,phone,city,priority,status,days_since_last_purchase,total_sales")
-    .neq("status", "lost")
-    .limit(2500);
-
-  if (minDaysInactive > 0) {
-    customerQuery = customerQuery.gte("days_since_last_purchase", minDaysInactive);
-  }
-  if (targetCity) {
-    customerQuery = customerQuery.ilike("city", `%${targetCity.replace(/[%_]/g, "")}%`);
-  }
-  if (priorityFilter === "urgent") {
-    customerQuery = customerQuery.in("priority", ["vip", "high"]);
-  } else if (priorityFilter !== "all") {
-    customerQuery = customerQuery.eq("priority", priorityFilter);
-  }
   if (eligibleIds && !eligibleIds.size) redirect("/campaigns?error=no-target");
 
-  const { data: customers, error: customerError } = await customerQuery;
+  const { data: customers, error: customerError } = await collectAllRows<TargetCustomer>(
+    (from, to) => {
+      let query = supabase
+        .from("customer_sales_summary")
+        .select("id,name,phone,city,priority,status,days_since_last_purchase,total_sales")
+        .neq("status", "lost");
+      if (minDaysInactive > 0) query = query.gte("days_since_last_purchase", minDaysInactive);
+      if (targetCity) query = query.ilike("city", `%${targetCity.replace(/[%_]/g, "")}%`);
+      if (priorityFilter === "urgent") query = query.in("priority", ["vip", "high"]);
+      else if (priorityFilter !== "all") query = query.eq("priority", priorityFilter);
+      return query.order("id").range(from, to) as unknown as Promise<{
+        data: TargetCustomer[] | null;
+        error: unknown;
+      }>;
+    },
+  );
   if (customerError) redirect("/campaigns?error=database");
 
   const typedCustomers = (customers ?? []) as TargetCustomer[];
@@ -162,13 +191,14 @@ async function createCampaign(formData: FormData) {
 
   if (!targets.length) redirect("/campaigns?error=no-target");
 
-  const { data: campaign, error: campaignError } = await supabase
-    .from("campaigns")
-    .insert({
+  const { data: campaignId, error: campaignError } = await supabase.rpc(
+    "create_campaign_with_members",
+    {
+      p_request_id: requestId,
+      p_campaign: {
       name,
       campaign_type: campaignType,
       channel,
-      status: "active",
       target_product: targetProduct || null,
       target_city: targetCity || null,
       min_days_inactive: minDaysInactive,
@@ -181,47 +211,44 @@ async function createCampaign(formData: FormData) {
         min_days_inactive: minDaysInactive,
         priority: priorityFilter,
       },
-      started_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+      },
+      p_customer_ids: targets.map((customer: TargetCustomer) => customer.id),
+    },
+  );
 
-  if (campaignError || !campaign) redirect("/campaigns?error=save");
-
-  const rows = targets.map((customer: TargetCustomer) => ({
-    campaign_id: campaign.id,
-    customer_id: customer.id,
-    status: "pending",
-  }));
-
-  for (let index = 0; index < rows.length; index += 200) {
-    const { error } = await supabase
-      .from("campaign_members")
-      .insert(rows.slice(index, index + 200));
-    if (error) {
-      await supabase.from("campaigns").delete().eq("id", campaign.id);
-      redirect("/campaigns?error=members");
-    }
-  }
+  if (campaignError || !campaignId) redirect("/campaigns?error=save");
 
   revalidatePath("/campaigns");
-  redirect(`/campaigns/${campaign.id}?created=1`);
+  redirect(`/campaigns/${campaignId}?created=1`);
 }
 
 export default async function CampaignsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; saved?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string; page?: string }>;
 }) {
   const params = await searchParams;
+  const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const pageSize = 20;
+  const from = (page - 1) * pageSize;
   const supabase = await createClient();
-  const { data: campaigns, error } = await supabase
+  const select =
+    "id,name,campaign_type,channel,status,target_product,target_city,min_days_inactive,priority_filter,created_at,target_count,contacted_count,response_count,requested_price_count,ordered_count,no_answer_count,no_need_count,order_value,conversion_rate";
+  const { data: campaigns, error, count } = await supabase
     .from("campaign_performance_summary")
-    .select(
-      "id,name,campaign_type,channel,status,target_product,target_city,min_days_inactive,priority_filter,created_at,target_count,contacted_count,response_count,requested_price_count,ordered_count,no_answer_count,no_need_count,order_value,conversion_rate",
-    )
+    .select(select, { count: "exact" })
     .order("created_at", { ascending: false })
-    .limit(50);
+    .range(from, from + pageSize - 1);
+  const allCampaignResult = await collectAllRows<CampaignSummary>((rangeFrom, rangeTo) =>
+    supabase
+      .from("campaign_performance_summary")
+      .select(select)
+      .order("id")
+      .range(rangeFrom, rangeTo) as unknown as Promise<{
+        data: CampaignSummary[] | null;
+        error: unknown;
+      }>,
+  );
 
   const errorMessage =
     params.error === "invalid"
@@ -239,12 +266,15 @@ export default async function CampaignsPage({
                 : null;
 
   const typedCampaigns = (campaigns ?? []) as CampaignSummary[];
-  const activeCampaigns = typedCampaigns.filter((item: CampaignSummary) => item.status === "active");
-  const totalOrders = typedCampaigns.reduce(
+  const allCampaigns = allCampaignResult.data;
+  const totalCampaigns = count ?? allCampaigns.length;
+  const totalPages = Math.max(1, Math.ceil(totalCampaigns / pageSize));
+  const activeCampaigns = allCampaigns.filter((item: CampaignSummary) => item.status === "active");
+  const totalOrders = allCampaigns.reduce(
     (sum: number, item: CampaignSummary) => sum + numeric(item.ordered_count),
     0,
   );
-  const totalOrderValue = typedCampaigns.reduce(
+  const totalOrderValue = allCampaigns.reduce(
     (sum: number, item: CampaignSummary) => sum + numeric(item.order_value),
     0,
   );
@@ -258,7 +288,7 @@ export default async function CampaignsPage({
       {errorMessage ? <div className={styles.alert}>{errorMessage}</div> : null}
       {error ? (
         <div className={styles.alert}>
-          ابتدا فایل SQL مرحله ۱۳ را اجرا کن. جزئیات: {error.message}
+          اطلاعات کمپین‌ها دریافت نشد. شناسه خطا: CAMPAIGNS-READ
         </div>
       ) : null}
 
@@ -292,6 +322,7 @@ export default async function CampaignsPage({
           </header>
 
           <form action={createCampaign} className={styles.form}>
+            <input type="hidden" name="request_id" value={crypto.randomUUID()} />
             <label className={styles.full}>
               نام کمپین
               <input name="name" required maxLength={140} placeholder="مثلاً بازگشت خریداران پد فرانسوی" />
@@ -366,7 +397,7 @@ export default async function CampaignsPage({
               <h3>کمپین‌های اخیر</h3>
               <p>نرخ تبدیل و فروش هر کمپین را مقایسه کن.</p>
             </div>
-            <span>{number.format(typedCampaigns.length)} کمپین</span>
+            <span>{number.format(totalCampaigns)} کمپین</span>
           </header>
 
           {typedCampaigns.length ? (
@@ -402,6 +433,13 @@ export default async function CampaignsPage({
               <p>فرم روبه‌رو را پر کن تا اولین فهرست هدف فروش ایجاد شود.</p>
             </div>
           )}
+          {totalPages > 1 ? (
+            <nav className={styles.pagination} aria-label="صفحه‌بندی کمپین‌ها">
+              {page > 1 ? <Link href={{ pathname: "/campaigns", query: { page: page - 1 } }}>صفحه قبل</Link> : <span />}
+              <b>صفحه {number.format(page)} از {number.format(totalPages)}</b>
+              {page < totalPages ? <Link href={{ pathname: "/campaigns", query: { page: page + 1 } }}>صفحه بعد</Link> : <span />}
+            </nav>
+          ) : null}
         </article>
       </section>
     </AppShell>

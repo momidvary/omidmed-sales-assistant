@@ -11,6 +11,7 @@ import {
   type FollowupForScoring,
 } from "@/lib/sales/followup-priority";
 import styles from "./today.module.css";
+import { tehranDateKey as sharedTehranDateKey } from "@/lib/finance/metrics";
 
 const number = new Intl.NumberFormat("fa-IR");
 const DAILY_TARGET = 15;
@@ -40,6 +41,9 @@ type WorkspaceCustomer = CustomerForFollowup & {
   potential_value: number | string | null;
   archived_at: string | null;
   city: string | null;
+  holo_balance_amount: number | string | null;
+  holo_balance_status: string | null;
+  holo_last_synced_at: string | null;
 };
 
 type ExtendedFollowup = FollowupForScoring & {
@@ -56,9 +60,9 @@ type OpportunityRow = {
   estimated_value: number | string | null;
 };
 
-type DebtRow = {
-  customer_id: string;
-  account_balance_amount: number | string;
+type DailySalesRow = {
+  invoice_count: number | string;
+  invoiced_sales_amount: number | string;
 };
 
 type Candidate = ReturnType<
@@ -131,16 +135,6 @@ function formatDate(value: string | null) {
   }).format(new Date(`${value}T12:00:00+03:30`));
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) return "تعیین نشده";
-
-  return new Intl.DateTimeFormat("fa-IR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Tehran",
-  }).format(new Date(value));
-}
-
 function normalizePhoneForLink(phone: string | null) {
   if (!phone) return null;
 
@@ -152,12 +146,7 @@ function normalizePhoneForLink(phone: string | null) {
 }
 
 function tehranDateKey(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: "Asia/Tehran",
-  }).format(date);
+  return sharedTehranDateKey(date);
 }
 
 function addTehranDaysAtTen(days: number) {
@@ -173,6 +162,19 @@ function isDue(value: string | null | undefined) {
   return Boolean(
     value && new Date(value).getTime() <= Date.now(),
   );
+}
+
+async function collectAllRows<T>(
+  load: (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>,
+) {
+  const data: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const result = await load(from, from + 999);
+    if (result.error) return { data, error: result.error };
+    const rows = result.data ?? [];
+    data.push(...rows);
+    if (rows.length < 1000) return { data, error: null };
+  }
 }
 
 function defaultSmsText(item: WorkspaceItem) {
@@ -225,23 +227,13 @@ async function saveQuickFollowup(formData: FormData) {
   const returnView = safeView(
     String(formData.get("return_view") ?? "all"),
   );
+  const requestId = String(formData.get("request_id") ?? "").trim();
 
-  if (!customerId || !allowedOutcomes.has(outcome)) {
+  if (!customerId || !allowedOutcomes.has(outcome) || !/^[0-9a-f-]{36}$/i.test(requestId)) {
     redirect(`/?view=${returnView}&error=invalid`);
   }
 
   const supabase = await createClient();
-  const { data: customer, error: customerError } =
-    await supabase
-      .from("customers")
-      .select("status,lead_stage")
-      .eq("id", customerId)
-      .single();
-
-  if (customerError || !customer) {
-    redirect(`/?view=${returnView}&error=customer`);
-  }
-
   const nextFollowupAt = outcomeNextFollowup(outcome);
 
   const notesByOutcome: Record<string, string> = {
@@ -261,54 +253,18 @@ async function saveQuickFollowup(formData: FormData) {
       "ثبت سریع از مرکز فروش روزانه: مشتری از دست رفت.",
   };
 
-  const { error: insertError } = await supabase
-    .from("followups")
-    .insert({
-      customer_id: customerId,
-      channel: "phone",
-      outcome,
-      notes: notesByOutcome[outcome],
-      next_followup_at: nextFollowupAt,
-    });
+  const { error: mutationError } = await supabase.rpc("record_customer_followup", {
+    p_request_id: requestId,
+    p_customer_id: customerId,
+    p_channel: "phone",
+    p_outcome: outcome,
+    p_notes: notesByOutcome[outcome],
+    p_next_followup_at: nextFollowupAt,
+    p_potential_value: null,
+  });
 
-  if (insertError) {
+  if (mutationError) {
     redirect(`/?view=${returnView}&error=save`);
-  }
-
-  const customerUpdate: Record<string, unknown> = {
-    next_followup_at: nextFollowupAt,
-  };
-
-  if (outcome === "order_placed") {
-    customerUpdate.status = "active";
-    customerUpdate.lead_stage = "converted";
-  } else if (outcome === "lost") {
-    customerUpdate.status = "lost";
-    customerUpdate.lead_stage = "lost";
-  } else if (outcome === "requested_price") {
-    customerUpdate.lead_stage = "quoted";
-  } else if (
-    customer.status === "prospect" &&
-    outcome === "follow_up_later"
-  ) {
-    customerUpdate.lead_stage =
-      customer.lead_stage === "interested"
-        ? "decision"
-        : "contacted";
-  } else if (
-    customer.status === "prospect" &&
-    outcome === "no_answer"
-  ) {
-    customerUpdate.lead_stage = "contacted";
-  }
-
-  const { error: updateError } = await supabase
-    .from("customers")
-    .update(customerUpdate)
-    .eq("id", customerId);
-
-  if (updateError) {
-    redirect(`/?view=${returnView}&error=update`);
   }
 
   revalidatePath("/");
@@ -376,54 +332,53 @@ export default async function Home({
     view?: string;
     saved?: string;
     error?: string;
+    page?: string;
   }>;
 }) {
   const params = await searchParams;
   const view = safeView(params.view);
+  const currentPage = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
   const supabase = await createClient();
+  const todayKey = tehranDateKey();
 
   const [
     customerResult,
     followupResult,
     opportunityResult,
-    debtorResult,
+    dailySalesResult,
   ] = await Promise.all([
+    collectAllRows<WorkspaceCustomer>((from, to) =>
+      supabase
+        .from("customer_crm_summary")
+        .select("id,name,phone,status,priority,lead_stage,potential_value,archived_at,city,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at")
+        .is("archived_at", null)
+        .range(from, to) as unknown as Promise<{ data: WorkspaceCustomer[] | null; error: { message: string } | null }>,
+    ),
+    collectAllRows<ExtendedFollowup>((from, to) =>
+      supabase
+        .from("followups")
+        .select("customer_id,followup_at,outcome,next_followup_at,notes,potential_value")
+        .order("followup_at", { ascending: false })
+        .range(from, to) as unknown as Promise<{ data: ExtendedFollowup[] | null; error: { message: string } | null }>,
+    ),
+    collectAllRows<OpportunityRow>((from, to) =>
+      supabase
+        .from("sales_opportunities")
+        .select("id,customer_id,status,stage,product_interest,next_followup_at,estimated_value")
+        .in("status", ["open", "on_hold"])
+        .range(from, to) as unknown as Promise<{ data: OpportunityRow[] | null; error: { message: string } | null }>,
+    ),
     supabase
-      .from("customer_crm_summary")
-      .select(
-        "id,name,phone,status,priority,lead_stage,potential_value,archived_at,city,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase",
-      )
-      .is("archived_at", null)
-      .limit(2000),
-    supabase
-      .from("followups")
-      .select(
-        "customer_id,followup_at,outcome,next_followup_at,notes,potential_value",
-      )
-      .order("followup_at", { ascending: false })
-      .limit(6000),
-    supabase
-      .from("sales_opportunities")
-      .select(
-        "id,customer_id,status,stage,product_interest,next_followup_at,estimated_value",
-      )
-      .in("status", ["open", "on_hold"])
-      .limit(2500),
-    supabase
-      .from("invoices")
-      .select("customer_id,account_balance_amount")
-      .eq("account_balance_status", "debtor")
-      .gt("account_balance_amount", 0)
-      .limit(5000),
+      .from("owner_sales_daily")
+      .select("invoice_count,invoiced_sales_amount")
+      .eq("invoice_date", todayKey)
+      .maybeSingle(),
   ]);
 
-  const customers = (customerResult.data ??
-    []) as WorkspaceCustomer[];
-  const followups = (followupResult.data ??
-    []) as ExtendedFollowup[];
-  const opportunities = (opportunityResult.data ??
-    []) as OpportunityRow[];
-  const debtRows = (debtorResult.data ?? []) as DebtRow[];
+  const customers = customerResult.data;
+  const followups = followupResult.data;
+  const opportunities = opportunityResult.data;
+  const dailySales = dailySalesResult.data as DailySalesRow | null;
 
   const customerMap = new Map(
     customers.map((customer) => [customer.id, customer]),
@@ -507,12 +462,10 @@ export default async function Home({
 
   const debtByCustomer = new Map<string, number>();
 
-  for (const row of debtRows) {
-    debtByCustomer.set(
-      row.customer_id,
-      (debtByCustomer.get(row.customer_id) ?? 0) +
-        numeric(row.account_balance_amount),
-    );
+  for (const customer of customers) {
+    if (customer.holo_balance_status !== "debtor") continue;
+    const amount = numeric(customer.holo_balance_amount);
+    if (amount > 0) debtByCustomer.set(customer.id, amount);
   }
 
   for (const [customerId, debtAmount] of debtByCustomer) {
@@ -547,9 +500,11 @@ export default async function Home({
     return true;
   });
 
-  const visibleItems = filteredItems.slice(0, 60);
+  const pageSize = 60;
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const visibleItems = filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  const todayKey = tehranDateKey();
   const todayStart = new Date(
     `${todayKey}T00:00:00+03:30`,
   ).getTime();
@@ -562,11 +517,11 @@ export default async function Home({
     return value >= todayStart && value <= todayEnd;
   });
 
-  const ordersToday = todayFollowups.filter(
+  const crmOrdersToday = todayFollowups.filter(
     (item) => item.outcome === "order_placed",
   );
 
-  const salesValueToday = ordersToday.reduce(
+  const crmOrderValueToday = crmOrdersToday.reduce(
     (sum, item) => sum + numeric(item.potential_value),
     0,
   );
@@ -602,7 +557,8 @@ export default async function Home({
   const queryError =
     customerResult.error ||
     followupResult.error ||
-    opportunityResult.error;
+    opportunityResult.error ||
+    dailySalesResult.error;
 
   const actionError =
     params.error === "save"
@@ -633,8 +589,7 @@ export default async function Home({
 
       {queryError ? (
         <div className={styles.error}>
-          خواندن اطلاعات فروش با خطا روبه‌رو شد:{" "}
-          {queryError.message}
+          خواندن اطلاعات فروش کامل نشد. دوباره تلاش کنید؛ شناسه خطا: DASHBOARD_READ_FAILED
         </div>
       ) : null}
 
@@ -707,9 +662,15 @@ export default async function Home({
         </article>
 
         <article>
-          <span>سفارش امروز</span>
-          <strong>{number.format(ordersToday.length)}</strong>
-          <small>{formatMoney(salesValueToday)} تومان ثبت‌شده</small>
+          <span>فروش فاکتورشده امروز</span>
+          <strong>{number.format(numeric(dailySales?.invoice_count))}</strong>
+          <small>{formatMoney(dailySales?.invoiced_sales_amount)} تومان از فاکتور معتبر هلو</small>
+        </article>
+
+        <article>
+          <span>توافق/سفارش CRM امروز</span>
+          <strong>{number.format(crmOrdersToday.length)}</strong>
+          <small>{formatMoney(crmOrderValueToday)} تومان ارزش CRM؛ فاکتور حسابداری نیست</small>
         </article>
 
         <article>
@@ -977,6 +938,7 @@ export default async function Home({
                             name="customer_id"
                             value={customer.id}
                           />
+                          <input type="hidden" name="request_id" value={crypto.randomUUID()} />
                           <input
                             type="hidden"
                             name="outcome"
@@ -1012,6 +974,13 @@ export default async function Home({
               </p>
             </div>
           )}
+          {totalPages > 1 ? (
+            <nav className={styles.tabs} aria-label="صفحه‌بندی صف فروش">
+              {safePage > 1 ? <Link href={`/?view=${view}&page=${safePage - 1}`}>صفحه قبل</Link> : null}
+              <span>صفحه {number.format(safePage)} از {number.format(totalPages)}</span>
+              {safePage < totalPages ? <Link href={`/?view=${view}&page=${safePage + 1}`}>صفحه بعد</Link> : null}
+            </nav>
+          ) : null}
         </article>
 
         <aside className={styles.sidePanel}>

@@ -43,7 +43,7 @@ export default async function ProductsPage() {
   return (
     <AppShell active="accounting" title="فرمول ساخت محصولات" subtitle="برای هر محصول مشخص کن چه موادی و با چه مقدار مصرف می‌شوند.">
       <AccountingNav active="products" />
-      {error ? <div className={styles.alert}>ابتدا SQL مرحله ۱۴ را اجرا کن. جزئیات: {error.message}</div> : null}
+      {error ? <div className={styles.alert}>اطلاعات محصولات دریافت نشد. شناسه خطا: ACCOUNTING-PRODUCTS-READ</div> : null}
       {!materials.length ? <div className={styles.warning}>قبل از تعریف محصول، مواد اولیه و خدمات تولیدی را ثبت کن.</div> : null}
 
       <article className={`${styles.panel} ${styles.panelWide}`}>

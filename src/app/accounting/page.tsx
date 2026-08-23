@@ -15,9 +15,9 @@ export default async function AccountingPage() {
   const range = currentJalaliMonthRange();
 
   const [purchasesResult, expensesResult, payrollResult, materialsResult, productsResult, settingsResult] = await Promise.all([
-    supabase.from("purchase_invoices").select("id,total_amount,payment_status,invoice_date").gte("invoice_date", range.from).lt("invoice_date", range.toExclusive),
+    supabase.from("purchase_invoice_balances").select("id,total_amount,paid_amount,outstanding_amount,derived_payment_status,invoice_date").gte("invoice_date", range.from).lt("invoice_date", range.toExclusive),
     supabase.from("workshop_expenses").select("id,amount,category,expense_date").gte("expense_date", range.from).lt("expense_date", range.toExclusive),
-    supabase.from("payroll_entries").select("id,net_pay,employer_costs,paid_amount,status").eq("jalali_year", range.year).eq("jalali_month", range.month),
+    supabase.from("payroll_entry_totals").select("id,gross_pay,calculated_net_pay,total_paid_amount,remaining_amount,labor_cost,status").eq("jalali_year", range.year).eq("jalali_month", range.month),
     supabase.from("material_cost_summary").select("id,name,replacement_unit_cost,latest_purchase_date,replacement_price_at,latest_change_percent").eq("is_active", true),
     supabase.from("costing_products").select("id,name,is_active").eq("is_active", true),
     supabase.from("costing_settings").select("stale_price_days").maybeSingle(),
@@ -30,7 +30,7 @@ export default async function AccountingPage() {
   const materials = materialsResult.data ?? [];
   const products = productsResult.data ?? [];
   const staleDays = Number(settingsResult.data?.stale_price_days ?? 30);
-  const now = Date.now();
+  const now = range.generatedAtMs;
   const staleMaterials = materials.filter((item) => {
     const date = item.replacement_price_at || item.latest_purchase_date;
     if (!date || !numeric(item.replacement_unit_cost)) return true;
@@ -40,8 +40,8 @@ export default async function AccountingPage() {
 
   const purchaseTotal = purchases.reduce((sum, item) => sum + numeric(item.total_amount), 0);
   const expenseTotal = expenses.reduce((sum, item) => sum + numeric(item.amount), 0);
-  const payrollCost = payroll.reduce((sum, item) => sum + numeric(item.net_pay) + numeric(item.employer_costs), 0);
-  const unpaidPurchases = purchases.filter((item) => item.payment_status !== "paid").reduce((sum, item) => sum + numeric(item.total_amount), 0);
+  const payrollCost = payroll.reduce((sum, item) => sum + numeric(item.labor_cost), 0);
+  const unpaidPurchases = purchases.reduce((sum, item) => sum + numeric(item.outstanding_amount), 0);
 
   const modules = [
     { href: "/accounting/materials", eyebrow: "ورودی تولید", title: "مواد اولیه و قیمت جایگزینی", text: "آخرین قیمت خرید، میانگین موزون و قیمت روز مواد را نگه دار.", value: `${materials.length.toLocaleString("fa-IR")} ماده` },
@@ -55,7 +55,7 @@ export default async function AccountingPage() {
   return (
     <AppShell active="accounting" title="حسابداری مدیریتی کارگاه" subtitle="کنترل خرید، هزینه، بهای تمام‌شده و قیمت پیشنهادی فروش؛ هلو همچنان مرجع حسابداری رسمی باقی می‌ماند.">
       <AccountingNav active="overview" />
-      {missingTableError ? <div className={styles.alert}>ابتدا فایل SQL مرحله ۱۴ را در Supabase اجرا کن. جزئیات: {missingTableError.message}</div> : null}
+      {missingTableError ? <div className={styles.alert}>اطلاعات حسابداری کامل در دسترس نیست. شناسه خطا: ACCOUNTING_READ_FAILED</div> : null}
 
       <section className={styles.hero}>
         <div>
@@ -69,7 +69,7 @@ export default async function AccountingPage() {
       <section className={styles.metrics}>
         <article className={styles.metric}><span>خرید مواد این ماه</span><strong>{formatMoney(purchaseTotal)}</strong><small>{purchases.length.toLocaleString("fa-IR")} فاکتور ثبت‌شده</small></article>
         <article className={styles.metric}><span>هزینه‌های کارگاه</span><strong>{formatMoney(expenseTotal)}</strong><small>غیر از فاکتور مواد و حقوق</small></article>
-        <article className={styles.metric}><span>هزینه حقوق این ماه</span><strong>{formatMoney(payrollCost)}</strong><small>خالص پرداختی + هزینه کارفرما</small></article>
+        <article className={styles.metric}><span>هزینه نیروی انسانی این ماه</span><strong>{formatMoney(payrollCost)}</strong><small>حقوق ناخالص + هزینه کارفرما؛ مستقل از مساعده و زمان پرداخت</small></article>
         <article className={styles.metric}><span>خریدهای تسویه‌نشده</span><strong>{formatMoney(unpaidPurchases)}</strong><small>برای کنترل نقدینگی و سررسیدها</small></article>
       </section>
 

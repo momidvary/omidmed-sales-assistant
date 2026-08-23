@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { buildAssistantContext } from "@/lib/assistant/context";
 import { createClient } from "@/lib/supabase/server";
+import {
+  AiConfigError,
+  aiConfigErrorStatus,
+  providerErrorMessage,
+  resolveAiConfig,
+} from "@/lib/ai/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -117,17 +123,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-5.6-luna";
-
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            "کلید OpenAI تنظیم نشده است. مقدار OPENAI_API_KEY را در فایل .env.local قرار بده.",
-        },
-        { status: 503 },
-      );
+    let apiKey: string;
+    let model: string;
+    try {
+      ({ apiKey, model } = resolveAiConfig("assistant"));
+    } catch (error) {
+      if (error instanceof AiConfigError) {
+        return NextResponse.json(
+          { error: error.userMessage, code: error.code },
+          { status: aiConfigErrorStatus() },
+        );
+      }
+      throw error;
     }
 
     const context = await buildAssistantContext({ supabase, message });
@@ -161,21 +168,13 @@ export async function POST(request: Request) {
     const data = (await response.json()) as OpenAIResponse;
 
     if (!response.ok) {
-      const rawMessage = data.error?.message ?? "خطای نامشخص از سرویس هوش مصنوعی";
-      let userMessage = "ارتباط با سرویس هوش مصنوعی انجام نشد.";
+      const userMessage = providerErrorMessage(response.status);
 
-      if (response.status === 401) {
-        userMessage = "کلید OpenAI معتبر نیست؛ مقدار OPENAI_API_KEY را بررسی کن.";
-      } else if (response.status === 429) {
-        userMessage =
-          "سهمیه یا اعتبار API کافی نیست، یا تعداد درخواست‌ها زیاد شده است.";
-      } else if (response.status === 400 && /model/i.test(rawMessage)) {
-        userMessage =
-          "مدل انتخاب‌شده در حساب API فعال نیست. مقدار OPENAI_MODEL را بررسی کن.";
-      }
-
-      console.error("OpenAI Responses API error:", response.status, rawMessage);
-      return NextResponse.json({ error: userMessage }, { status: 502 });
+      console.error("OpenAI Responses API request failed", { status: response.status });
+      return NextResponse.json(
+        { error: `${userMessage} شناسه خطا: ASSISTANT-PROVIDER` },
+        { status: 502 },
+      );
     }
 
     const answer = extractOutputText(data);
@@ -192,8 +191,9 @@ export async function POST(request: Request) {
       usage: data.usage ?? null,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("Sales assistant route error:", message);
+    console.error("Sales assistant route failed", {
+      type: error instanceof Error ? error.name : "UnknownError",
+    });
 
     const isTimeout =
       error instanceof Error &&
@@ -203,7 +203,7 @@ export async function POST(request: Request) {
       {
         error: isTimeout
           ? "پاسخ هوش مصنوعی بیش از حد طول کشید؛ دوباره تلاش کن."
-          : "در آماده‌سازی پاسخ خطایی رخ داد. اتصال دیتابیس و تنظیمات را بررسی کن.",
+          : "در آماده‌سازی پاسخ خطایی رخ داد. شناسه خطا: ASSISTANT-RUNTIME",
       },
       { status: 500 },
     );

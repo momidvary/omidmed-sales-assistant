@@ -14,6 +14,7 @@ import {
 } from "@/lib/accounting/format";
 import { jalaliToGregorian } from "@/lib/jalali";
 import { createClient } from "@/lib/supabase/server";
+import { payrollTotals } from "@/lib/finance/metrics";
 
 import styles from "./setup.module.css";
 
@@ -373,7 +374,7 @@ async function applyCalculatedOverhead() {
         .select("employee_id,department,production_share_percent"),
       supabase
         .from("payroll_entries")
-        .select("employee_id,net_pay,employer_costs")
+        .select("employee_id,base_salary,overtime_amount,bonus_amount,allowance_amount,deductions_amount,advance_amount,paid_amount,employer_costs")
         .eq("jalali_year", setup.jalali_year)
         .eq("jalali_month", setup.jalali_month),
       supabase
@@ -404,7 +405,16 @@ async function applyCalculatedOverhead() {
   let sellingPayroll = 0;
   for (const row of payrollResult.data ?? []) {
     const profile = employeeMap.get(row.employee_id);
-    const total = Number(row.net_pay ?? 0) + Number(row.employer_costs ?? 0);
+    const total = payrollTotals({
+      baseSalary: row.base_salary,
+      overtime: row.overtime_amount,
+      bonus: row.bonus_amount,
+      allowance: row.allowance_amount,
+      deductions: row.deductions_amount,
+      advance: row.advance_amount,
+      paid: row.paid_amount,
+      employerCosts: row.employer_costs,
+    }).laborCost;
     const share = Number(profile?.production_share_percent ?? 0) / 100;
     if (["production", "printing", "packing"].includes(profile?.department ?? "")) {
       productionPayroll += total * share;
@@ -413,14 +423,11 @@ async function applyCalculatedOverhead() {
     }
   }
 
-  const ruleMap = new Map(
-    (rulesResult.data ?? []).map((row) => [row.category, row]),
-  );
   let allocatedExpenses = 0;
   let allocatedSellingExpenses = 0;
   for (const row of expensesResult.data ?? []) {
     const amount = Number(row.amount ?? 0);
-    if (["confirmed", "auto"].includes(row.classification_status ?? "")) {
+    if (row.classification_status === "confirmed") {
       if (row.cost_scope === "manufacturing") {
         allocatedExpenses += amount * (Number(row.manufacturing_share_percent ?? 0) / 100);
       } else if (row.cost_scope === "selling") {
@@ -428,10 +435,7 @@ async function applyCalculatedOverhead() {
       }
       continue;
     }
-    const rule = ruleMap.get(row.category);
-    if (rule?.include_in_product_cost) {
-      allocatedExpenses += amount * (Number(rule.manufacturing_share_percent ?? 0) / 100);
-    }
+    // Suggested/automatic classifications stay outside costing until a user confirms them.
   }
 
   const profiles = (productProfilesResult.data ?? []) as ProductProfile[];
@@ -580,7 +584,7 @@ export default async function PricingSetupPage({
       .select("employee_id,department,production_share_percent,productive_hours_per_month,notes"),
     supabase
       .from("payroll_entries")
-      .select("employee_id,net_pay,employer_costs")
+      .select("employee_id,base_salary,overtime_amount,bonus_amount,allowance_amount,deductions_amount,advance_amount,paid_amount,employer_costs")
       .eq("jalali_year", setup.jalali_year)
       .eq("jalali_month", setup.jalali_month),
     supabase
@@ -643,7 +647,16 @@ export default async function PricingSetupPage({
   const payrollMap = new Map(
     (payrollResult.data ?? []).map((row) => [
       row.employee_id,
-      Number(row.net_pay ?? 0) + Number(row.employer_costs ?? 0),
+      payrollTotals({
+        baseSalary: row.base_salary,
+        overtime: row.overtime_amount,
+        bonus: row.bonus_amount,
+        allowance: row.allowance_amount,
+        deductions: row.deductions_amount,
+        advance: row.advance_amount,
+        paid: row.paid_amount,
+        employerCosts: row.employer_costs,
+      }).laborCost,
     ]),
   );
 

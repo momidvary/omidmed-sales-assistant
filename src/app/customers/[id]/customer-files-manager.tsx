@@ -26,7 +26,6 @@ const fileTypeLabels: Record<CustomerFileRecord["file_type"], string> = {
 };
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const ALLOWED_TYPES = ["image/png", "image/jpeg", "application/pdf"];
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} بایت`;
@@ -40,14 +39,6 @@ function formatDateTime(value: string) {
     timeStyle: "short",
     timeZone: "Asia/Tehran",
   }).format(new Date(value));
-}
-
-function getFileExtension(file: File) {
-  const fromName = file.name.split(".").pop()?.toLowerCase();
-  if (fromName && /^[a-z0-9]{2,5}$/.test(fromName)) return fromName;
-  if (file.type === "image/png") return "png";
-  if (file.type === "image/jpeg") return "jpg";
-  return "pdf";
 }
 
 export default function CustomerFilesManager({
@@ -84,9 +75,7 @@ export default function CustomerFilesManager({
         }),
       );
 
-      if (!cancelled) {
-        setSignedUrls(Object.fromEntries(entries));
-      }
+      if (!cancelled) setSignedUrls(Object.fromEntries(entries));
     }
 
     void loadSignedUrls();
@@ -104,80 +93,45 @@ export default function CustomerFilesManager({
       setError("ابتدا یک فایل انتخاب کن.");
       return;
     }
-
-    if (!ALLOWED_TYPES.includes(selectedFile.type)) {
-      setError("فقط فایل PNG، JPG یا PDF قابل بارگذاری است.");
-      return;
-    }
-
-    if (selectedFile.size > MAX_FILE_SIZE) {
-      setError("حجم فایل باید حداکثر ۱۰ مگابایت باشد.");
+    if (selectedFile.size < 5 || selectedFile.size > MAX_FILE_SIZE) {
+      setError("حجم فایل معتبر نیست؛ حداکثر ۱۰ مگابایت مجاز است.");
       return;
     }
 
     setIsUploading(true);
+    try {
+      const payload = new FormData();
+      payload.set("file", selectedFile);
+      payload.set("fileType", fileType);
+      payload.set("title", title.trim());
+      payload.set("invoiceNumber", fileType === "invoice" ? invoiceNumber.trim() : "");
 
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    const user = userData.user;
+      const response = await fetch(
+        `/api/customers/${encodeURIComponent(customerId)}/files`,
+        { method: "POST", body: payload },
+      );
+      const data = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        file?: CustomerFileRecord;
+        message?: string;
+      };
+      if (!response.ok || !data.ok || !data.file) {
+        setError(data.message || "بارگذاری فایل انجام نشد. شناسه خطا: CUSTOMER-FILE-UPLOAD");
+        return;
+      }
 
-    if (userError || !user) {
-      setError("نشست ورود معتبر نیست. صفحه را تازه‌سازی کن و دوباره وارد شو.");
+      setFiles((current) => [data.file as CustomerFileRecord, ...current]);
+      setSelectedFile(null);
+      setTitle("");
+      setInvoiceNumber("");
+      const input = document.getElementById("customer-file-input") as HTMLInputElement | null;
+      if (input) input.value = "";
+      setMessage("فایل با موفقیت در پرونده مشتری ذخیره شد.");
+    } catch {
+      setError("ارتباط برای بارگذاری فایل کامل نشد. شناسه خطا: CUSTOMER-FILE-NETWORK");
+    } finally {
       setIsUploading(false);
-      return;
     }
-
-    const extension = getFileExtension(selectedFile);
-    const storagePath = `${user.id}/${customerId}/${crypto.randomUUID()}.${extension}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("customer-files")
-      .upload(storagePath, selectedFile, {
-        cacheControl: "3600",
-        contentType: selectedFile.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      setError(`بارگذاری فایل انجام نشد: ${uploadError.message}`);
-      setIsUploading(false);
-      return;
-    }
-
-    const { data: insertedFile, error: insertError } = await supabase
-      .from("customer_files")
-      .insert({
-        customer_id: customerId,
-        file_type: fileType,
-        title: title.trim() || null,
-        invoice_number:
-          fileType === "invoice" && invoiceNumber.trim()
-            ? invoiceNumber.trim()
-            : null,
-        storage_path: storagePath,
-        original_name: selectedFile.name,
-        mime_type: selectedFile.type,
-        size_bytes: selectedFile.size,
-      })
-      .select(
-        "id,file_type,title,invoice_number,storage_path,original_name,mime_type,size_bytes,created_at",
-      )
-      .single();
-
-    if (insertError || !insertedFile) {
-      await supabase.storage.from("customer-files").remove([storagePath]);
-      setError(`ثبت مشخصات فایل انجام نشد: ${insertError?.message ?? "خطای نامشخص"}`);
-      setIsUploading(false);
-      return;
-    }
-
-    setFiles((current) => [insertedFile as CustomerFileRecord, ...current]);
-    setSelectedFile(null);
-    setTitle("");
-    setInvoiceNumber("");
-    const input = document.getElementById("customer-file-input") as HTMLInputElement | null;
-    if (input) input.value = "";
-    setMessage("فایل با موفقیت در پرونده مشتری ذخیره شد.");
-    setIsUploading(false);
   }
 
   async function handleDelete(file: CustomerFileRecord) {
@@ -189,31 +143,36 @@ export default function CustomerFilesManager({
     setError(null);
     setMessage(null);
     setDeletingId(file.id);
-
-    const { error: storageError } = await supabase.storage
-      .from("customer-files")
-      .remove([file.storage_path]);
-
-    if (storageError) {
-      setError(`حذف فایل انجام نشد: ${storageError.message}`);
+    try {
+      const response = await fetch(
+        `/api/customers/${encodeURIComponent(customerId)}/files`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId: file.id }),
+        },
+      );
+      const data = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        cleanupPending?: boolean;
+        message?: string;
+      };
+      if (!response.ok || !data.ok) {
+        setError(data.message || "حذف فایل انجام نشد. شناسه خطا: CUSTOMER-FILE-DELETE");
+        return;
+      }
+      setFiles((current) => current.filter((item) => item.id !== file.id));
+      setMessage(
+        data.message ||
+          (data.cleanupPending
+            ? "فایل از پرونده حذف شد؛ پاک‌سازی فضای ذخیره‌سازی بعداً انجام می‌شود."
+            : "فایل حذف شد."),
+      );
+    } catch {
+      setError("ارتباط برای حذف فایل کامل نشد. شناسه خطا: CUSTOMER-FILE-DELETE-NETWORK");
+    } finally {
       setDeletingId(null);
-      return;
     }
-
-    const { error: rowError } = await supabase
-      .from("customer_files")
-      .delete()
-      .eq("id", file.id);
-
-    if (rowError) {
-      setError(`رکورد فایل حذف نشد: ${rowError.message}`);
-      setDeletingId(null);
-      return;
-    }
-
-    setFiles((current) => current.filter((item) => item.id !== file.id));
-    setMessage("فایل حذف شد.");
-    setDeletingId(null);
   }
 
   return (

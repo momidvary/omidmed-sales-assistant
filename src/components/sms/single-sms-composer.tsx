@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import AiSmsSuggester from "./ai-sms-suggester";
 import styles from "./sms.module.css";
 
@@ -50,6 +50,7 @@ export default function SingleSmsComposer({
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const requestIdRef = useRef<string | null>(null);
 
   async function send() {
     if (!text.trim()) {
@@ -59,6 +60,8 @@ export default function SingleSmsComposer({
 
     setLoading(true);
     setMessage(null);
+    const clientRequestId = requestIdRef.current ?? crypto.randomUUID();
+    requestIdRef.current = clientRequestId;
 
     try {
       const response = await fetch("/api/sms/send", {
@@ -73,6 +76,7 @@ export default function SingleSmsComposer({
           campaignMemberId,
           opportunityId,
           scheduleFollowup,
+          clientRequestId,
         }),
       });
 
@@ -81,11 +85,15 @@ export default function SingleSmsComposer({
         success?: boolean;
         recId?: string;
         warning?: string;
+        code?: string;
       };
 
       if (!response.ok || !result.success) {
+        if (result.code !== "PROVIDER_RESULT_UNKNOWN") requestIdRef.current = null;
         throw new Error(result.error || "ارسال پیامک انجام نشد.");
       }
+
+      requestIdRef.current = null;
 
       setMessage({
         type: "success",

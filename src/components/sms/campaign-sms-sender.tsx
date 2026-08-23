@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import AiSmsSuggester from "./ai-sms-suggester";
 import styles from "./sms.module.css";
 
@@ -24,6 +24,7 @@ export default function CampaignSmsSender({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef<string | null>(null);
 
   async function sendCampaign() {
     if (!confirmed) {
@@ -39,12 +40,14 @@ export default function CampaignSmsSender({
     setLoading(true);
     setError(null);
     setResult(null);
+    const clientRequestId = requestIdRef.current ?? crypto.randomUUID();
+    requestIdRef.current = clientRequestId;
 
     try {
       const response = await fetch("/api/sms/send-campaign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, template, includeRetries }),
+        body: JSON.stringify({ campaignId, template, includeRetries, clientRequestId }),
       });
 
       const data = (await response.json()) as {
@@ -62,9 +65,12 @@ export default function CampaignSmsSender({
       setResult(
         `ارسال کمپین «${campaignName}» تمام شد: ${data.successCount ?? 0} موفق، ${data.failedCount ?? 0} ناموفق و ${data.skippedCount ?? 0} شماره نامعتبر.`,
       );
+      requestIdRef.current = null;
       setConfirmed(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "ارسال انجام نشد.");
+      const message = caught instanceof Error ? caught.message : "ارسال انجام نشد.";
+      setError(message);
+      if (!message.includes("نامشخص")) requestIdRef.current = null;
     } finally {
       setLoading(false);
     }

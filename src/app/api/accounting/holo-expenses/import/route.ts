@@ -251,29 +251,18 @@ export async function POST(request: Request) {
       duplicates,
     });
   } catch (caught) {
-    let message = "خطای ناشناخته در ورود فایل";
-
-    if (caught instanceof Error) {
-      message = caught.message;
-    } else if (caught && typeof caught === "object") {
-      const error = caught as {
-        message?: unknown;
-        details?: unknown;
-        hint?: unknown;
-        code?: unknown;
-      };
-
-      const parts = [
-        typeof error.message === "string" ? error.message : "",
-        typeof error.details === "string" ? error.details : "",
-        typeof error.hint === "string" ? error.hint : "",
-        typeof error.code === "string" ? `کد خطا: ${error.code}` : "",
-      ].filter(Boolean);
-
-      if (parts.length) message = parts.join(" | ");
-    }
-
-    console.error("Holo accounting import failed:", caught);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const safeCode =
+      caught && typeof caught === "object" && "code" in caught &&
+      typeof (caught as { code?: unknown }).code === "string"
+        ? (caught as { code: string }).code.slice(0, 24)
+        : null;
+    console.error("Holo accounting import failed", {
+      type: caught instanceof Error ? caught.name : "UnknownError",
+      code: safeCode,
+    });
+    return NextResponse.json(
+      { error: "ورود اطلاعات حسابداری انجام نشد. شناسه خطا: HOLO-EXPENSE-IMPORT" },
+      { status: 500 },
+    );
   }
 }

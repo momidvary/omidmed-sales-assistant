@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "@/components/app-shell";
 import styles from "./import.module.css";
@@ -119,6 +120,7 @@ function toRecord(row: CsvRow): CustomerRecord {
 }
 
 export default function CustomerImporter() {
+  const router = useRouter();
   const [rows, setRows] = useState<CsvRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
@@ -186,10 +188,9 @@ export default function CustomerImporter() {
       }
 
       setMessage(`${new Intl.NumberFormat("fa-IR").format(records.length)} مشتری با موفقیت وارد یا به‌روزرسانی شد.`);
-      setTimeout(() => { window.location.href = "/customers"; }, 900);
-    } catch (caught) {
-      const text = caught instanceof Error ? caught.message : "خطای نامشخص در ورود اطلاعات";
-      setError(text);
+      setTimeout(() => router.push("/customers"), 900);
+    } catch {
+      setError("ورود اطلاعات انجام نشد. شناسه خطا: CUSTOMER-IMPORT");
     } finally {
       setLoading(false);
     }

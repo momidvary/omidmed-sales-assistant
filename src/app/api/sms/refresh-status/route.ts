@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { checkMeliPayamakDelivery } from "@/lib/sms/melipayamak-delivery";
 
+// Polls the provider in batches of 100 over every pending message, so the
+// work grows with history and needs an explicit ceiling.
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 type MessageRow = {
   id: string;
   provider_rec_id: string;
@@ -19,20 +24,28 @@ export async function POST() {
     );
   }
 
-  const { data, error } = await supabase
-    .from("sms_messages")
-    .select("id,provider_rec_id")
-    .eq("request_success", true)
-    .not("provider_rec_id", "is", null)
-    .in("delivery_status", ["accepted", "unknown"])
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const rows: MessageRow[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("sms_messages")
+      .select("id,provider_rec_id")
+      .eq("request_success", true)
+      .not("provider_rec_id", "is", null)
+      .in("delivery_status", ["accepted", "unknown"])
+      .order("created_at", { ascending: true })
+      .range(offset, offset + pageSize - 1);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json(
+        { error: "خواندن وضعیت پیامک‌ها انجام نشد.", code: "SMS-STATUS-READ" },
+        { status: 500 },
+      );
+    }
+    const page = (data ?? []) as MessageRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
   }
-
-  const rows = (data ?? []) as MessageRow[];
 
   if (!rows.length) {
     return NextResponse.json({
@@ -44,19 +57,21 @@ export async function POST() {
     });
   }
 
-  let statuses: Awaited<ReturnType<typeof checkMeliPayamakDelivery>>;
+  const statuses: Awaited<ReturnType<typeof checkMeliPayamakDelivery>> = [];
 
   try {
-    statuses = await checkMeliPayamakDelivery(
-      rows.map((row) => row.provider_rec_id),
-    );
-  } catch (caught) {
+    for (let index = 0; index < rows.length; index += 100) {
+      statuses.push(
+        ...(await checkMeliPayamakDelivery(
+          rows.slice(index, index + 100).map((row) => row.provider_rec_id),
+        )),
+      );
+    }
+  } catch {
     return NextResponse.json(
       {
-        error:
-          caught instanceof Error
-            ? caught.message
-            : "بررسی وضعیت تحویل انجام نشد.",
+        error: "بررسی وضعیت تحویل انجام نشد.",
+        code: "SMS-STATUS-PROVIDER",
       },
       { status: 502 },
     );
@@ -101,7 +116,7 @@ export async function POST() {
     return NextResponse.json(
       {
         error: "بخشی از وضعیت‌ها دریافت شد، اما ثبت کامل انجام نشد.",
-        details: updateErrors.slice(0, 3),
+        code: "SMS-STATUS-SAVE",
       },
       { status: 500 },
     );

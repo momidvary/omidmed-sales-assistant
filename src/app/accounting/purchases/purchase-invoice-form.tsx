@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import JalaliDateField from "@/components/jalali-date-field";
 import { createClient } from "@/lib/supabase/client";
 import { jalaliToGregorian } from "@/lib/jalali";
+import { safeOriginalFilename, validateMedicalDocument } from "@/lib/uploads/medical-document";
 import styles from "../accounting.module.css";
 
 type Supplier = { id: string; name: string };
@@ -101,7 +102,21 @@ export default function PurchaseInvoiceForm({
       tax_amount: numberValue(line.tax),
     }));
 
-    const { data: invoiceId, error } = await supabase.rpc("create_purchase_invoice", {
+    const openingPaid = numberValue(String(data.get("opening_paid_amount") ?? "0"));
+    const estimatedTotal = Math.max(
+      0,
+      lineSubtotal -
+        numberValue(String(data.get("discount_amount") ?? "0")) +
+        numberValue(String(data.get("tax_amount") ?? "0")) +
+        numberValue(String(data.get("shipping_amount") ?? "0")) +
+        numberValue(String(data.get("other_costs") ?? "0")),
+    );
+    if (openingPaid > estimatedTotal) {
+      setBusy(false);
+      return setMessage("مبلغ پرداخت اولیه نمی‌تواند بیشتر از مبلغ نهایی فاکتور باشد.");
+    }
+
+    const { data: invoiceId, error } = await supabase.rpc("create_purchase_invoice_v2", {
       p_supplier_id: String(data.get("supplier_id") ?? ""),
       p_invoice_number: String(data.get("invoice_number") ?? ""),
       p_invoice_date: invoiceDate,
@@ -109,47 +124,54 @@ export default function PurchaseInvoiceForm({
       p_tax_amount: numberValue(String(data.get("tax_amount") ?? "0")),
       p_shipping_amount: numberValue(String(data.get("shipping_amount") ?? "0")),
       p_other_costs: numberValue(String(data.get("other_costs") ?? "0")),
-      p_payment_status: String(data.get("payment_status") ?? "unpaid"),
       p_payment_method: String(data.get("payment_method") ?? "bank_transfer"),
       p_due_date: dueDate,
       p_notes: String(data.get("notes") ?? ""),
       p_items: items,
+      p_opening_paid_amount: openingPaid,
     });
 
     if (error || !invoiceId) {
       setBusy(false);
-      return setMessage(`ثبت فاکتور انجام نشد: ${error?.message ?? "خطای نامشخص"}`);
+      return setMessage("ثبت فاکتور انجام نشد. دوباره تلاش کنید؛ شناسه خطا: PURCHASE_INVOICE_SAVE_FAILED");
     }
 
     const file = data.get("attachment");
+    let attachmentWarning = "";
     if (file instanceof File && file.size > 0) {
-      if (!["image/png", "image/jpeg", "application/pdf"].includes(file.type) || file.size > 10 * 1024 * 1024) {
-        setMessage("فاکتور ثبت شد، اما فایل فقط باید PNG، JPG یا PDF و کمتر از ۱۰ مگابایت باشد.");
-      } else {
+      try {
+        const validated = await validateMedicalDocument(file, 10 * 1024 * 1024);
         const { data: userData } = await supabase.auth.getUser();
         const userId = userData.user?.id;
-        const ext = file.name.split(".").pop()?.toLowerCase() || "pdf";
         if (userId) {
-          const path = `${userId}/purchase_invoice/${invoiceId}/${crypto.randomUUID()}.${ext}`;
-          const { error: uploadError } = await supabase.storage.from("accounting-files").upload(path, file, { contentType: file.type });
+          const path = `${userId}/purchase_invoice/${invoiceId}/${crypto.randomUUID()}.${validated.extension}`;
+          const { error: uploadError } = await supabase.storage.from("accounting-files").upload(path, file, { contentType: validated.mimeType });
           if (!uploadError) {
-            await supabase.from("accounting_attachments").insert({
+            const { error: attachmentError } = await supabase.from("accounting_attachments").insert({
               entity_type: "purchase_invoice",
               entity_id: invoiceId,
               storage_path: path,
-              original_name: file.name,
-              mime_type: file.type,
+              original_name: safeOriginalFilename(file.name),
+              mime_type: validated.mimeType,
               size_bytes: file.size,
             });
+            if (attachmentError) {
+              await supabase.storage.from("accounting-files").remove([path]);
+              attachmentWarning = "فاکتور ثبت شد، اما ثبت فایل انجام نشد. شناسه خطا: PURCHASE-ATTACHMENT-SAVE";
+            }
+          } else {
+            attachmentWarning = "فاکتور ثبت شد، اما بارگذاری فایل انجام نشد. شناسه خطا: PURCHASE-ATTACHMENT-UPLOAD";
           }
         }
+      } catch {
+        attachmentWarning = "فاکتور ثبت شد، اما فایل باید PNG، JPEG یا PDF واقعی و کمتر از ۱۰ مگابایت باشد.";
       }
     }
 
     form.reset();
     setLines([emptyLine(materials)]);
     setBusy(false);
-    setMessage("فاکتور خرید و اقلام آن با موفقیت ثبت شد.");
+    setMessage(attachmentWarning || "فاکتور خرید و اقلام آن با موفقیت ثبت شد.");
     router.refresh();
   }
 
@@ -160,7 +182,7 @@ export default function PurchaseInvoiceForm({
       <div className={styles.formGrid}>
         <label>تأمین‌کننده<select name="supplier_id" required>{suppliers.map((supplier) => <option value={supplier.id} key={supplier.id}>{supplier.name}</option>)}</select></label>
         <label>شماره فاکتور<input name="invoice_number" placeholder="اختیاری" /></label>
-        <label>وضعیت پرداخت<select name="payment_status" defaultValue="unpaid"><option value="unpaid">پرداخت‌نشده</option><option value="partial">بخشی پرداخت شده</option><option value="paid">تسویه‌شده</option></select></label>
+        <label>مبلغ پرداخت اولیه<input name="opening_paid_amount" inputMode="decimal" defaultValue="0" /><small>وضعیت از مبلغ پرداخت‌شده محاسبه می‌شود.</small></label>
         <label>روش پرداخت<select name="payment_method" defaultValue="bank_transfer"><option value="bank_transfer">واریز بانکی</option><option value="cash">نقد</option><option value="card">کارت</option><option value="cheque">چک</option><option value="credit">نسیه</option><option value="other">سایر</option></select></label>
       </div>
       <div className={styles.formGrid2}>
