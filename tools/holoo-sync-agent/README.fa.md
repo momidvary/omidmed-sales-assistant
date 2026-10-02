@@ -158,7 +158,7 @@ Installer این کارها را انجام می‌دهد:
 3. Secret را با DPAPI کاربر جاری ذخیره می‌کند.
 4. اتصال SQL، metadata و احراز هویت GET در API را تست می‌کند؛ Sync واقعی انجام نمی‌دهد.
 5. دو Scheduled Task با همان کاربر نصب‌کننده می‌سازد:
-   - `OmidMed Holoo Incremental Sync`: هر دو ساعت
+   - `OmidMed Holoo Incremental Sync`: هر ۱۵ دقیقه و ۲ دقیقه بعد از ورود به ویندوز (با پارامتر `-IntervalMinutes` قابل تغییر است)
    - `OmidMed Holoo Weekly Full Sync`: یکشنبه ساعت ۰۳:۰۰ محلی
 
 Scheduled Taskها با `LogonType=InteractiveToken` و `RunLevel=Highest` اجرا می‌شوند (نام همین حالت در پارامتر PowerShell برابر `Interactive` است). بنابراین Sync خودکار فقط زمانی اجرا می‌شود که همان کاربر ویندوزی که Agent را نصب کرده است وارد سیستم باشد. این حالت باعث می‌شود DPAPI در scope همان کاربر قابل خواندن باشد و نشست کاربر به اینترنت برای ارسال امن به API دسترسی داشته باشد.

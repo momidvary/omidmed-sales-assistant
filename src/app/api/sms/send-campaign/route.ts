@@ -15,6 +15,7 @@ import {
   personalizeSmsTemplate,
   sendMultipleSms,
   SmsProviderError,
+  meliPayamakConfigError,
 } from "@/lib/sms/melipayamak";
 
 type MemberRow = { id: string; customer_id: string; status: string };
@@ -218,13 +219,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "هیچ شماره موبایل معتبری پیدا نشد." }, { status: 400 });
   }
 
-  const sender = normalizeSender(process.env.MELIPAYAMAK_SENDER);
-  if (!sender) {
+  const configError = meliPayamakConfigError();
+  if (configError) {
     return NextResponse.json(
-      { error: "شماره خط فرستنده ملی پیامک تنظیم نشده است." },
+      { error: configError, code: "SMS_NOT_CONFIGURED" },
       { status: 503 },
     );
   }
+  const sender = normalizeSender(process.env.MELIPAYAMAK_SENDER);
 
   const { data: batch, error: batchError } = await supabase
     .from("sms_send_batches")
@@ -320,7 +322,7 @@ export async function POST(request: Request) {
   const results: Array<
     Target & { messageId: string; success: boolean; recId: string | null; status: string }
   > = [];
-  let providerFailure: { ambiguous: boolean; attempted: number } | null = null;
+  let providerFailure: { ambiguous: boolean; attempted: number; reason: string } | null = null;
   let persistenceFailure = false;
   let persistenceUnknownCount = 0;
 
@@ -345,7 +347,9 @@ export async function POST(request: Request) {
               request_success: providerResult.success,
               provider_status: providerResult.status || null,
               delivery_status: providerResult.success ? "accepted" : "rejected",
-              error_message: providerResult.success ? null : "سرویس پیامک این گیرنده را نپذیرفت.",
+              error_message: providerResult.success
+                ? null
+                : providerResult.status || "سرویس پیامک این گیرنده را نپذیرفت.",
               sent_at: recordedAt,
             })
             .eq("id", messageId);
@@ -368,6 +372,7 @@ export async function POST(request: Request) {
       }
     } catch (error) {
       const ambiguous = !(error instanceof SmsProviderError) || error.ambiguous;
+      const reason = error instanceof SmsProviderError && !ambiguous ? error.message : "";
       const attemptedAt = new Date().toISOString();
       const ids = chunk
         .map((target) => messageIdByMember.get(target.memberId))
@@ -380,12 +385,12 @@ export async function POST(request: Request) {
             delivery_status: ambiguous ? "unknown" : "failed",
             error_message: ambiguous
               ? "نتیجه Provider نامشخص است؛ ارسال خودکار تکرار نشود."
-              : "Provider درخواست گروهی را نپذیرفت.",
+              : reason || "Provider درخواست گروهی را نپذیرفت.",
             provider_result_unknown_at: ambiguous ? attemptedAt : null,
           })
           .in("id", ids);
       }
-      providerFailure = { ambiguous, attempted: chunk.length };
+      providerFailure = { ambiguous, attempted: chunk.length, reason };
       break;
     }
   }
@@ -454,7 +459,7 @@ export async function POST(request: Request) {
         code: ambiguous ? "PROVIDER_RESULT_UNKNOWN" : "PROVIDER_REJECTED",
         error: ambiguous
           ? "نتیجه بخشی از ارسال نامشخص است؛ برای جلوگیری از پیام تکراری دوباره ارسال نکنید."
-          : "سرویس پیامک ادامه ارسال کمپین را نپذیرفت.",
+          : `سرویس پیامک ادامه ارسال کمپین را نپذیرفت${providerFailure?.reason ? `: ${providerFailure.reason}` : "."}`,
         total: targets.length,
         successCount: successful.length,
         failedCount,

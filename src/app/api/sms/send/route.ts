@@ -6,6 +6,7 @@ import { addTehranDaysAtTen } from "@/lib/campaigns/constants";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 import {
+  meliPayamakConfigError,
   normalizeIranMobile,
   normalizeSender,
   ensureSingleSmsOptOut,
@@ -125,19 +126,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const sender = normalizeSender(
-    process.env.MELIPAYAMAK_SENDER,
-  );
+  const configError = meliPayamakConfigError();
 
-  if (!sender) {
+  if (configError) {
     return NextResponse.json(
-      {
-        error:
-          "شماره خط فرستنده ملی پیامک تنظیم نشده است.",
-      },
+      { error: configError, code: "SMS_NOT_CONFIGURED" },
       { status: 503 },
     );
   }
+
+  const sender = normalizeSender(
+    process.env.MELIPAYAMAK_SENDER,
+  );
 
   const { data: pending, error: pendingError } = await supabase
     .from("sms_messages")
@@ -197,6 +197,8 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const ambiguous = !(error instanceof SmsProviderError) || error.ambiguous;
+    const providerReason =
+      error instanceof SmsProviderError && !ambiguous ? error.message : "";
     await supabase
       .from("sms_messages")
       .update({
@@ -205,7 +207,7 @@ export async function POST(request: Request) {
         delivery_status: ambiguous ? "unknown" : "failed",
         error_message: ambiguous
           ? "نتیجه Provider نامشخص است؛ ارسال خودکار تکرار نشود."
-          : "Provider درخواست را نپذیرفت.",
+          : providerReason || "Provider درخواست را نپذیرفت.",
         provider_result_unknown_at: ambiguous ? new Date().toISOString() : null,
       })
       .eq("id", pending.id);
@@ -216,7 +218,7 @@ export async function POST(request: Request) {
         code: ambiguous ? "PROVIDER_RESULT_UNKNOWN" : "PROVIDER_REJECTED",
         error: ambiguous
           ? "نتیجه ارسال مشخص نشد؛ برای جلوگیری از پیام تکراری دوباره ارسال نکنید."
-          : "سرویس پیامک درخواست را نپذیرفت.",
+          : `سرویس پیامک درخواست را نپذیرفت${providerReason ? `: ${providerReason}` : "."}`,
       },
       { status: ambiguous ? 504 : 502 },
     );
