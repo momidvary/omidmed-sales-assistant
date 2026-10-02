@@ -5,6 +5,7 @@ import { generatePosterText, MAX_DESCRIPTION_LENGTH, PosterTextError } from "@/l
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
+// Web search (up to 35s) plus one possible retry without it (up to 20s).
 export const maxDuration = 60;
 
 export async function POST(request: Request) {

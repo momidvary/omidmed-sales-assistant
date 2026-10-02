@@ -205,3 +205,35 @@ test("poster text output is trimmed to fit the layout", async () => {
   assert.ok(text.headline.length <= 40);
   assert.deepEqual(text.bullets, ["الف", "ب", "ج"]);
 });
+
+test("poster text asks for web search and falls back when the model rejects it", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const text = await generatePosterText({
+    apiKey: "k",
+    model: "m",
+    description: "پد فیزیوتراپی",
+    fetchImpl: (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      if (bodies.length === 1) return new Response("{}", { status: 400 });
+      return new Response(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({ headline: "پد", subheadline: "س", bullets: [], cta: "c", caption: "k" }),
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    }) as unknown as typeof fetch,
+  });
+  assert.equal(text.headline, "پد");
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[0].tools, [{ type: "web_search" }]);
+  assert.equal(bodies[1].tools, undefined);
+});
