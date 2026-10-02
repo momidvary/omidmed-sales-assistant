@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 
 import AppShell, { Icon } from "@/components/app-shell";
 import SingleSmsComposer from "@/components/sms/single-sms-composer";
+import PatternSmsButtons from "@/components/sms/pattern-sms-buttons";
+import { configuredPatterns } from "@/lib/sms/patterns";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCurrentJalaliDate,
@@ -873,6 +875,23 @@ export default async function CustomerPage({
           </a>
         </div>
       </section>
+
+      <PatternSmsButtons
+        customerId={customer.id}
+        customerName={customer.name}
+        phone={customer.phone}
+        invoiceNumbers={invoices
+          .map((invoice) => String(invoice.invoice_number ?? "").trim())
+          .filter(Boolean)
+          .slice(0, 10)}
+        patterns={configuredPatterns().map(({ key, button, description, text, variables }) => ({
+          key,
+          button,
+          description,
+          text,
+          variables,
+        }))}
+      />
 
       <nav className={styles.profileNav}>
         <a href="#overview">نمای کلی</a>
