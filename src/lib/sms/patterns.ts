@@ -51,7 +51,7 @@ export const SMS_PATTERNS: PatternDefinition[] = [
       "مشتری گرامی {0} ({1})، سفارش شما با شماره {2} ثبت شد و هم‌اکنون در حال پردازش است. اقلام سفارش {3} بوده و مبلغ {4} تومان می‌باشد. با تشکر از اعتماد شما.\nomidmed.com",
     variables: [
       { key: "title", label: "آقا / خانم", maxLength: 10, options: ["آقا", "خانم"], fill: "title" },
-      { key: "lastName", label: "نام خانوادگی", maxLength: 40, fill: "lastName" },
+      { key: "lastName", label: "نام مشتری (هلو)", maxLength: 40, fill: "lastName" },
       { key: "invoice", label: "شماره سفارش (فاکتور)", maxLength: 20, fill: "invoice" },
       { key: "items", label: "اقلام سفارش", maxLength: 80, fill: "items" },
       { key: "amount", label: "مبلغ (تومان)", maxLength: 20, fill: "amount" },

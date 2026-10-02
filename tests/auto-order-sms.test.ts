@@ -129,7 +129,7 @@ test("only new, unhandled invoices are messaged, once each", async () => {
   assert.deepEqual(bodies[0], {
     bodyId: 428045,
     to: "09121234567",
-    args: ["آقا/خانم", "علی رضایی", "1205", "پد ۲ عدد", "۱۲٬۰۰۰٬۰۰۰"],
+    args: ["آقا/خانم", "کلینیک سلامت", "1205", "پد ۲ عدد", "۱۲٬۰۰۰٬۰۰۰"],
   });
   const byId = Object.fromEntries(tables.invoices.map((row) => [row.id, row.order_sms_status]));
   assert.equal(byId["inv-new"], "sent");

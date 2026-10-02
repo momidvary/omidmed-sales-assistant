@@ -880,7 +880,6 @@ export default async function CustomerPage({
         customerId={customer.id}
         customerName={customer.name}
         phone={customer.phone}
-        contactName={customer.contact_name}
         invoices={invoices
           .filter((invoice) => String(invoice.invoice_number ?? "").trim())
           .slice(0, 10)

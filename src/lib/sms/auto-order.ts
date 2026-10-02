@@ -85,7 +85,7 @@ export async function sendAutoOrderSms(
     if (!claimed?.length) continue;
 
     const [{ data: customer }, { data: items }] = await Promise.all([
-      admin.from("customers").select("name,contact_name,phone").eq("id", invoice.customer_id).maybeSingle(),
+      admin.from("customers").select("name,phone").eq("id", invoice.customer_id).maybeSingle(),
       admin
         .from("invoice_items")
         .select("product_name,quantity")
@@ -101,7 +101,8 @@ export async function sendAutoOrderSms(
       continue;
     }
 
-    const name = String(customer.contact_name || customer.name || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    // The customer's name as registered in Holoo, never the purchase contact.
+    const name = String(customer.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
     const parsed = patternArgs(orderPattern, {
       title: "آقا/خانم",
       lastName: name,

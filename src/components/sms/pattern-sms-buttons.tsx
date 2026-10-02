@@ -24,7 +24,6 @@ export type PatternInvoice = { number: string; amount: string; items: string };
 type Props = {
   customerId: string;
   customerName: string;
-  contactName: string | null;
   phone: string | null;
   invoices: PatternInvoice[];
   patterns: PatternOption[];
@@ -44,12 +43,7 @@ function fill(text: string, args: string[]) {
   return text.replace(/\{(\d+)\}/g, (_, index: string) => args[Number(index)] || "…");
 }
 
-function lastWord(value: string | null) {
-  const words = (value ?? "").trim().split(/\s+/).filter(Boolean);
-  return words.length > 1 ? words[words.length - 1] : "";
-}
-
-export default function PatternSmsButtons({ customerId, customerName, contactName, phone, invoices, patterns }: Props) {
+export default function PatternSmsButtons({ customerId, customerName, phone, invoices, patterns }: Props) {
   const [active, setActive] = useState<PatternOption | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -72,7 +66,7 @@ export default function PatternSmsButtons({ customerId, customerName, contactNam
     const sources: Record<string, string> = {
       name: customerName,
       title: "آقا",
-      lastName: lastWord(contactName),
+      lastName: customerName,
       invoice: latest?.number ?? "",
       amount: latest?.amount ?? "",
       items: latest?.items ?? "",
