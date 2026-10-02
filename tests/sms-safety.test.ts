@@ -118,3 +118,32 @@ test("a small provider error code in recIds is never recorded as a successful se
     else process.env.MELIPAYAMAK_API_TOKEN = previousToken;
   }
 });
+
+test("a success status without per-recipient ids counts as an accepted send", async () => {
+  const { sendMultipleSms } = await import("../src/lib/sms/melipayamak");
+  const previousToken = process.env.MELIPAYAMAK_API_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.MELIPAYAMAK_API_TOKEN = "test-token";
+  try {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ status: "عملیات موفق" }), { status: 200 })) as typeof fetch;
+    const [accepted] = await sendMultipleSms({ sender: "50001", to: ["09121234567"], text: ["a"] });
+    assert.equal(accepted.success, true);
+    assert.equal(accepted.recId, null);
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ recId: 4512345678, status: "عملیات موفق" }), { status: 200 })) as typeof fetch;
+    const [withSingularId] = await sendMultipleSms({ sender: "50001", to: ["09121234567"], text: ["a"] });
+    assert.equal(withSingularId.success, true);
+    assert.equal(withSingularId.recId, "4512345678");
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ status: "عملیات ناموفق" }), { status: 200 })) as typeof fetch;
+    const [failed] = await sendMultipleSms({ sender: "50001", to: ["09121234567"], text: ["a"] });
+    assert.equal(failed.success, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.MELIPAYAMAK_API_TOKEN;
+    else process.env.MELIPAYAMAK_API_TOKEN = previousToken;
+  }
+});

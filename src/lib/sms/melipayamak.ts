@@ -110,6 +110,23 @@ export function meliPayamakConfigError() {
   return null;
 }
 
+function isSuccessStatus(status: string) {
+  return /موفق|success/i.test(status) && !/ناموفق|unsuccess|fail/i.test(status);
+}
+
+// Melipayamak's REST endpoints and plans name the id field differently
+// (recIds, recId, RecIds, Value) and sometimes return a comma-separated string.
+function collectRecIds(response: ProviderJson): unknown[] {
+  for (const key of ["recIds", "RecIds", "recId", "RecId", "Value", "value"]) {
+    const value = response[key];
+    if (Array.isArray(value)) return value;
+    if (value != null && String(value).trim() !== "") {
+      return String(value).split(",").map((item) => item.trim());
+    }
+  }
+  return [];
+}
+
 // Real Melipayamak recIds are long numbers; small values are the provider's
 // numeric error codes (wrong credentials, insufficient credit, invalid
 // sender, ...), and must never be recorded as a successful send.
@@ -230,24 +247,25 @@ export async function sendMultipleSms(input: {
     udh: "",
   });
 
-  const recIds = Array.isArray(response.recIds)
-    ? response.recIds
-    : [];
-
+  const recIds = collectRecIds(response);
   const successes = Array.isArray(response.success)
     ? response.success
     : [];
-
   const status = providerStatus(response);
+  const statusSaysSuccess = isSuccessStatus(status);
 
   return input.to.map((to, index) => {
     const rawRecId =
-      recIds[index] == null ? null : String(recIds[index]);
+      recIds[index] == null || recIds[index] === "" ? null : String(recIds[index]);
     const recId = isRealRecId(rawRecId) ? rawRecId : null;
+    const flagged = successes.length === 0 || providerBoolean(successes[index]);
 
+    // Normally success means a real recId. Some account plans answer with a
+    // success status ("عملیات موفق") but no per-recipient ids; that is still
+    // an accepted send, only without delivery tracking.
     const success =
-      Boolean(recId) &&
-      (successes.length === 0 || providerBoolean(successes[index]));
+      (Boolean(recId) && flagged) ||
+      (!rawRecId && recIds.length === 0 && statusSaysSuccess && flagged);
 
     return {
       to,
