@@ -3,7 +3,7 @@ param(
     [ValidateSet("initial", "incremental", "weekly_full", "manual_full", "dry_run")]
     [string]$Mode = "incremental",
 
-    [string]$ConfigPath = (Join-Path $PSScriptRoot "config.json"),
+    [string]$ConfigPath,
 
     [switch]$ConnectionTestOnly,
 
@@ -12,6 +12,10 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $PSScriptRoot "config.json"
+}
 
 $script:LogFile = $null
 $script:LogRetentionDays = 30
@@ -94,13 +98,17 @@ function Import-AgentConfiguration {
     if ($maxPayloadBytes -lt 10000 -or $maxPayloadBytes -gt 2400000) {
         throw "sync.maxPayloadBytes must be between 10000 and 2400000."
     }
+    $fullSyncMutexWaitSeconds = [int](Get-PropertyValue -Object $sync -Name "fullSyncMutexWaitSeconds" -DefaultValue 1800)
+    if ($fullSyncMutexWaitSeconds -lt 0 -or $fullSyncMutexWaitSeconds -gt 3600) {
+        throw "sync.fullSyncMutexWaitSeconds must be between 0 and 3600."
+    }
 
     $integratedSecurity = [bool](Get-PropertyValue -Object $sql -Name "integratedSecurity" -DefaultValue $true)
     if (-not $integratedSecurity) {
         throw "Only Windows Integrated Security is supported. Use a Windows account with SELECT-only access."
     }
 
-    $server = [string](Get-PropertyValue -Object $sql -Name "server" -DefaultValue "localhost\TNC")
+    $server = [string](Get-PropertyValue -Object $sql -Name "server" -DefaultValue "lpc:.\TNC")
     $database = [string](Get-PropertyValue -Object $sql -Name "database" -DefaultValue "Holoo1")
     $apiUrl = [string](Get-PropertyValue -Object $api -Name "url" -DefaultValue "https://omidmed-sales-assistant.vercel.app/api/holo-agent/sync")
 
@@ -128,6 +136,7 @@ function Import-AgentConfiguration {
         CustomerBatchSize = $customerBatchSize
         InvoiceBatchSize = $invoiceBatchSize
         MaxPayloadBytes = $maxPayloadBytes
+        FullSyncMutexWaitSeconds = $fullSyncMutexWaitSeconds
         IncrementalOverlapMinutes = [int](Get-PropertyValue -Object $sync -Name "incrementalOverlapMinutes" -DefaultValue 15)
         SourceTimeZone = [string](Get-PropertyValue -Object $sync -Name "sourceTimeZone" -DefaultValue "Iran Standard Time")
         DataDirectory = $dataDirectory
@@ -175,8 +184,15 @@ function Write-AgentLog {
 }
 
 function Enter-AgentMutex {
+    param(
+        [ValidateRange(0, 3600)]
+        [int]$WaitSeconds = 0,
+
+        [string]$MutexName = "Global\OmidMed.HolooSyncAgent"
+    )
+
     $created = $false
-    $mutex = New-Object Threading.Mutex($false, "Global\OmidMed.HolooSyncAgent", [ref]$created)
+    $mutex = New-Object Threading.Mutex($false, $MutexName, [ref]$created)
     $acquired = $false
     try {
         $acquired = $mutex.WaitOne(0)
@@ -185,8 +201,21 @@ function Enter-AgentMutex {
         $acquired = $true
     }
 
+    if (-not $acquired -and $WaitSeconds -gt 0) {
+        Write-AgentLog -Level "INFO" -Message ("Another sync is running; waiting up to {0} second(s) for the full-sync lock." -f $WaitSeconds)
+        try {
+            $acquired = $mutex.WaitOne([TimeSpan]::FromSeconds($WaitSeconds))
+        }
+        catch [Threading.AbandonedMutexException] {
+            $acquired = $true
+        }
+    }
+
     if (-not $acquired) {
         $mutex.Dispose()
+        if ($WaitSeconds -gt 0) {
+            throw ("Another Holoo sync process is still running after waiting {0} second(s)." -f $WaitSeconds)
+        }
         throw "Another Holoo sync process is already running."
     }
 
@@ -1082,7 +1111,11 @@ function Invoke-AgentMain {
     $settings = Import-AgentConfiguration -RequestedPath $ConfigPath
     $script:SourceTimeZone = $settings.SourceTimeZone
     Initialize-AgentStorage -Settings $settings
-    $mutex = Enter-AgentMutex
+    $mutexWaitSeconds = 0
+    if ($Mode -in @("initial", "weekly_full", "manual_full")) {
+        $mutexWaitSeconds = $settings.FullSyncMutexWaitSeconds
+    }
+    $mutex = Enter-AgentMutex -WaitSeconds $mutexWaitSeconds
     try {
         Write-AgentLog -Level "INFO" -Message ("Starting mode={0}, server={1}, database={2}." -f $Mode, $settings.Server, $settings.Database)
 

@@ -1,6 +1,6 @@
 {
   "sql": {
-    "server": "localhost\\TNC",
+    "server": "lpc:.\\TNC",
     "database": "Holoo1",
     "integratedSecurity": true,
     "connectTimeoutSeconds": 15,
@@ -20,6 +20,7 @@
     "customerBatchSize": 150,
     "invoiceBatchSize": 25,
     "maxPayloadBytes": 2250000,
+    "fullSyncMutexWaitSeconds": 1800,
     "incrementalOverlapMinutes": 15,
     "sourceTimeZone": "Iran Standard Time"
   },
