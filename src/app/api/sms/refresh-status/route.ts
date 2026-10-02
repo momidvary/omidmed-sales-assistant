@@ -68,10 +68,11 @@ export async function POST() {
         )),
       );
     }
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.slice(0, 200) : "";
     return NextResponse.json(
       {
-        error: "بررسی وضعیت تحویل انجام نشد.",
+        error: `بررسی وضعیت تحویل انجام نشد${reason ? `: ${reason}` : "."}`,
         code: "SMS-STATUS-PROVIDER",
       },
       { status: 502 },

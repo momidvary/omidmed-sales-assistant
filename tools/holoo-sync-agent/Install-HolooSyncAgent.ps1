@@ -6,6 +6,9 @@ param(
 
     [Security.SecureString]$AgentSecret,
 
+    [ValidateRange(5, 1440)]
+    [int]$IntervalMinutes = 15,
+
     [switch]$Force
 )
 
@@ -179,18 +182,28 @@ $weeklyArguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -
 $incrementalAction = New-ScheduledTaskAction -Execute $powerShellPath -Argument $incrementalArguments -WorkingDirectory $installPath
 $weeklyAction = New-ScheduledTaskAction -Execute $powerShellPath -Argument $weeklyArguments -WorkingDirectory $installPath
 $incrementalStart = (Get-Date).AddMinutes(5)
-$incrementalTrigger = New-ScheduledTaskTrigger -Once -At $incrementalStart -RepetitionInterval (New-TimeSpan -Hours 2)
+# An explicit one-day repetition on a daily trigger behaves the same on every
+# Windows/PowerShell version; an open-ended -Once repetition does not.
+$incrementalTrigger = New-ScheduledTaskTrigger -Daily -At $incrementalStart
+$incrementalTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At $incrementalStart -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
+# The task runs as the interactive user (the DPAPI secret is user-scoped), so
+# it can only run while that user is signed in. Catch up right after sign-in.
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
+$logonTrigger.Delay = "PT2M"
 $weeklyTrigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Sunday -At "03:00"
 # The ScheduledTasks cmdlet calls Task Scheduler's InteractiveToken logon type "Interactive".
 $principal = New-ScheduledTaskPrincipal -UserId $taskUser -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+# Task Scheduler's defaults skip runs on battery power; a laptop running Holoo
+# would silently stop syncing.
+$incrementalSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+$weeklySettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
-Register-ScheduledTask -TaskName $IncrementalTaskName -Action $incrementalAction -Trigger $incrementalTrigger -Principal $principal -Settings $settings -Description "OmidMed SELECT-only Holoo incremental sync every two hours" -Force | Out-Null
-Register-ScheduledTask -TaskName $WeeklyTaskName -Action $weeklyAction -Trigger $weeklyTrigger -Principal $principal -Settings $settings -Description "OmidMed SELECT-only Holoo weekly full sync" -Force | Out-Null
+Register-ScheduledTask -TaskName $IncrementalTaskName -Action $incrementalAction -Trigger @($incrementalTrigger, $logonTrigger) -Principal $principal -Settings $incrementalSettings -Description ("OmidMed SELECT-only Holoo incremental sync every {0} minutes" -f $IntervalMinutes) -Force | Out-Null
+Register-ScheduledTask -TaskName $WeeklyTaskName -Action $weeklyAction -Trigger $weeklyTrigger -Principal $principal -Settings $weeklySettings -Description "OmidMed SELECT-only Holoo weekly full sync" -Force | Out-Null
 
 Write-Host "Holoo Sync Agent installed successfully."
 Write-Host ("Install directory: {0}" -f $installPath)
 Write-Host ("Task user: {0}" -f $taskUser)
-Write-Host ("Incremental task: {0} (every two hours)" -f $IncrementalTaskName)
+Write-Host ("Incremental task: {0} (every {1} minutes and at sign-in)" -f $IncrementalTaskName, $IntervalMinutes)
 Write-Host ("Weekly task: {0} (Sunday at 03:00 local time)" -f $WeeklyTaskName)
 Write-Host "The installer did not run a real sync. Run dry_run first, then start a real sync only after approval."

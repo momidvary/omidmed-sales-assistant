@@ -72,3 +72,49 @@ test("the appended opt-out is always the canonical Latin form", () => {
   assert.match(ensureSingleSmsOptOut("سلام لغو۱۱"), /\nلغو11$/);
   assert.match(ensureSingleSmsOptOut("سلام"), /\nلغو11$/);
 });
+
+test("delivery codes win over ambiguous labels", () => {
+  assert.equal(classifyDelivery("", "1"), "delivered");
+  assert.equal(classifyDelivery("", "2"), "undelivered");
+  assert.equal(classifyDelivery("لیست سیاه"), "undelivered");
+  assert.equal(classifyDelivery("رسیده به مخابرات", "8"), "accepted");
+});
+
+test("a missing Melipayamak token is a definite failure, not an ambiguous one", async () => {
+  const { sendSimpleSms, SmsProviderError } = await import("../src/lib/sms/melipayamak");
+  const previous = process.env.MELIPAYAMAK_API_TOKEN;
+  delete process.env.MELIPAYAMAK_API_TOKEN;
+  try {
+    await assert.rejects(
+      sendSimpleSms({ sender: "50001", to: "09121234567", text: "x" }),
+      (error: unknown) => error instanceof SmsProviderError && !error.ambiguous,
+    );
+  } finally {
+    if (previous !== undefined) process.env.MELIPAYAMAK_API_TOKEN = previous;
+  }
+});
+
+test("a small provider error code in recIds is never recorded as a successful send", async () => {
+  const { sendMultipleSms } = await import("../src/lib/sms/melipayamak");
+  const previousToken = process.env.MELIPAYAMAK_API_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.MELIPAYAMAK_API_TOKEN = "test-token";
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ recIds: [2, 4512345678], status: "" }), { status: 200 })) as typeof fetch;
+  try {
+    const [rejected, accepted] = await sendMultipleSms({
+      sender: "50001",
+      to: ["09121234567", "09121234568"],
+      text: ["a", "b"],
+    });
+    assert.equal(rejected.success, false);
+    assert.equal(rejected.recId, null);
+    assert.match(rejected.status, /کد خطا 2/);
+    assert.equal(accepted.success, true);
+    assert.equal(accepted.recId, "4512345678");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.MELIPAYAMAK_API_TOKEN;
+    else process.env.MELIPAYAMAK_API_TOKEN = previousToken;
+  }
+});

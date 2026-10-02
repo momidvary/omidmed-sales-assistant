@@ -99,6 +99,26 @@ export function ensureSingleSmsOptOut(value: string) {
 
 type ProviderJson = Record<string, unknown>;
 
+const MISSING_TOKEN_MESSAGE =
+  "توکن ملی پیامک (MELIPAYAMAK_API_TOKEN) در تنظیمات Vercel تعریف نشده است.";
+
+export function meliPayamakConfigError() {
+  if (!process.env.MELIPAYAMAK_API_TOKEN?.trim()) return MISSING_TOKEN_MESSAGE;
+  if (!normalizeSender(process.env.MELIPAYAMAK_SENDER)) {
+    return "شماره خط فرستنده ملی پیامک (MELIPAYAMAK_SENDER) در تنظیمات Vercel تعریف نشده است.";
+  }
+  return null;
+}
+
+// Real Melipayamak recIds are long numbers; small values are the provider's
+// numeric error codes (wrong credentials, insufficient credit, invalid
+// sender, ...), and must never be recorded as a successful send.
+function isRealRecId(value: string | null) {
+  if (!value) return false;
+  const numeric = Number(value);
+  return !Number.isFinite(numeric) || numeric > 1000;
+}
+
 function providerBoolean(value: unknown) {
   return (
     value === true ||
@@ -129,9 +149,9 @@ async function postToProvider(
   const token = process.env.MELIPAYAMAK_API_TOKEN?.trim();
 
   if (!token) {
-    throw new Error(
-      "توکن ملی پیامک در Environment Variables تنظیم نشده است.",
-    );
+    // Nothing reached the provider, so this is a definite failure: marking it
+    // ambiguous would block the recipient from ever being retried.
+    throw new SmsProviderError(MISSING_TOKEN_MESSAGE, false);
   }
 
   const controller = new AbortController();
@@ -221,23 +241,24 @@ export async function sendMultipleSms(input: {
   const status = providerStatus(response);
 
   return input.to.map((to, index) => {
-    const recId =
+    const rawRecId =
       recIds[index] == null ? null : String(recIds[index]);
+    const recId = isRealRecId(rawRecId) ? rawRecId : null;
 
     const success =
-      providerBoolean(successes[index]) ||
-      (successes.length === 0 && Boolean(recId));
+      Boolean(recId) &&
+      (successes.length === 0 || providerBoolean(successes[index]));
 
     return {
       to,
       text: input.text[index],
       success,
       recId,
-      status:
-        status ||
-        (success
-          ? ""
-          : "سرویس ملی پیامک، ارسال این گیرنده را نپذیرفت."),
+      status: success
+        ? status
+        : rawRecId && !recId
+          ? `ملی پیامک ارسال را نپذیرفت؛ کد خطا ${rawRecId}`
+          : status || "سرویس ملی پیامک، ارسال این گیرنده را نپذیرفت.",
     };
   });
 }

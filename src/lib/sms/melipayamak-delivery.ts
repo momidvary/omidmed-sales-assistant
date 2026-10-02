@@ -4,11 +4,19 @@ function statusText(value: unknown) {
   return value == null ? "" : String(value).trim();
 }
 
-export function classifyDelivery(label: string) {
+// Melipayamak delivery codes: 1 reached the handset, 2 did not reach the
+// handset, 16 did not reach the operator, 35 recipient is on the blacklist.
+const DELIVERED_CODES = new Set(["1"]);
+const UNDELIVERED_CODES = new Set(["2", "16", "35"]);
+
+export function classifyDelivery(label: string, code: string | null = null) {
+  if (code && DELIVERED_CODES.has(code)) return "delivered" as const;
+  if (code && UNDELIVERED_CODES.has(code)) return "undelivered" as const;
+
   const compact = label.replace(/\s+/g, "");
 
   if (
-    /ارسالنشده|تحویلنشده|نرسیده|ناموفق|ردشده|مسدود|بلک.?لیست/.test(
+    /ارسالنشده|تحویلنشده|نرسیده|ناموفق|ردشده|مسدود|بلک.?لیست|لیستسیاه/.test(
       compact,
     )
   ) {
@@ -26,7 +34,7 @@ export async function checkMeliPayamakDelivery(recIds: string[]) {
   const token = process.env.MELIPAYAMAK_API_TOKEN?.trim();
 
   if (!token) {
-    throw new Error("توکن ملی پیامک در Environment Variables تنظیم نشده است.");
+    throw new Error("توکن ملی پیامک (MELIPAYAMAK_API_TOKEN) در تنظیمات Vercel تعریف نشده است.");
   }
 
   const uniqueRecIds = Array.from(
@@ -85,7 +93,7 @@ export async function checkMeliPayamakDelivery(recIds: string[]) {
         recId,
         label: label || "وضعیت تحویل هنوز مشخص نشده است.",
         code,
-        deliveryStatus: classifyDelivery(label),
+        deliveryStatus: classifyDelivery(label, code),
       };
     });
   } catch (error) {
