@@ -13,10 +13,7 @@ import {
   resolveModel,
   resolveOpenAiKey,
 } from "../src/lib/ai/config";
-import {
-  ContentGenerationError,
-  generateStructuredContent,
-} from "../src/lib/content-studio/openai";
+import { generatePosterText, PosterTextError } from "../src/lib/poster/text";
 
 /** assert.throws() returns undefined, so capture the error explicitly. */
 function caught(fn: () => unknown) {
@@ -134,62 +131,109 @@ test("secret-shaped text is redacted before logging", () => {
   assert.match(redacted, /sk-\*\*\*/);
 });
 
-test("structured generation never surfaces raw provider error text", async () => {
+test("poster text generation never surfaces raw provider error text", async () => {
   const leak = "quota exceeded for org-SECRET123 using key sk-live-LEAKED";
-  const error = (await generateStructuredContent({
+  const error = await generatePosterText({
     apiKey: "k",
     model: "m",
-    prompt: "p",
-    schemaName: "s",
-    schema: {},
+    description: "پد فیزیوتراپی",
     fetchImpl: (async () =>
-      new Response(JSON.stringify({ error: { message: leak } }), {
-        status: 429,
-      })) as unknown as typeof fetch,
+      new Response(JSON.stringify({ error: { message: leak } }), { status: 429 })) as unknown as typeof fetch,
   }).then(
     () => null,
     (caught: unknown) => caught,
-  )) as ContentGenerationError;
+  );
 
-  assert.ok(error instanceof ContentGenerationError);
+  assert.ok(error instanceof PosterTextError);
   assert.equal(error.code, "PROVIDER");
-  assert.doesNotMatch(error.message, /SECRET123|SIGNED|sk-live|quota exceeded/);
+  assert.doesNotMatch(error.message, /SECRET123|sk-live|quota exceeded/);
 });
 
-test("provider transport failure is reported without internal detail", async () => {
-  const error = (await generateStructuredContent({
+test("poster provider transport failure is reported without internal detail", async () => {
+  const error = await generatePosterText({
     apiKey: "k",
     model: "m",
-    prompt: "p",
-    schemaName: "s",
-    schema: {},
+    description: "پد فیزیوتراپی",
     fetchImpl: (async () => {
       throw new Error("ECONNREFUSED 10.1.2.3:443 internal-host");
     }) as unknown as typeof fetch,
   }).then(
     () => null,
     (caught: unknown) => caught,
-  )) as ContentGenerationError;
+  );
 
+  assert.ok(error instanceof PosterTextError);
   assert.equal(error.code, "PROVIDER");
   assert.doesNotMatch(error.message, /ECONNREFUSED|10\.1\.2\.3|internal-host/);
 });
 
-test("missing key is refused before any request is attempted", async () => {
+test("poster text with a missing key is refused before any request is attempted", async () => {
   let called = false;
   await assert.rejects(
-    generateStructuredContent({
+    generatePosterText({
       apiKey: "",
       model: "m",
-      prompt: "p",
-      schemaName: "s",
-      schema: {},
+      description: "پد",
       fetchImpl: (async () => {
         called = true;
         return new Response("{}");
       }) as unknown as typeof fetch,
     }),
-    ContentGenerationError,
+    PosterTextError,
   );
   assert.equal(called, false);
+});
+
+test("poster text output is trimmed to fit the layout", async () => {
+  const text = await generatePosterText({
+    apiKey: "k",
+    model: "m",
+    description: "پد",
+    fetchImpl: (async () =>
+      new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            headline: "تیتر ".repeat(30),
+            subheadline: "زیرتیتر",
+            bullets: ["الف", "", "ب", "ج", "د"],
+            cta: "سفارش",
+            caption: "کپشن",
+          }),
+        }),
+      )) as unknown as typeof fetch,
+  });
+  assert.ok(text.headline.length <= 40);
+  assert.deepEqual(text.bullets, ["الف", "ب", "ج"]);
+});
+
+test("poster text asks for web search and falls back when the model rejects it", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const text = await generatePosterText({
+    apiKey: "k",
+    model: "m",
+    description: "پد فیزیوتراپی",
+    fetchImpl: (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      if (bodies.length === 1) return new Response("{}", { status: 400 });
+      return new Response(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({ headline: "پد", subheadline: "س", bullets: [], cta: "c", caption: "k" }),
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    }) as unknown as typeof fetch,
+  });
+  assert.equal(text.headline, "پد");
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[0].tools, [{ type: "web_search" }]);
+  assert.equal(bodies[1].tools, undefined);
 });

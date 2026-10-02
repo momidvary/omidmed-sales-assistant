@@ -106,10 +106,6 @@ export default async function HoloSyncStatusPage() {
         <Link href="/">
           ← بازگشت به مرکز فروش
         </Link>
-
-        <Link href="/import/holo">
-          ورود دستی و فایل‌های قبلی
-        </Link>
       </div>
 
       {runsResult.error ? (

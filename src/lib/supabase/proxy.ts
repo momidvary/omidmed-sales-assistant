@@ -40,17 +40,12 @@ export async function updateSession(request: NextRequest) {
   const isHoloAgentRoute = request.nextUrl.pathname.startsWith(
     "/api/holo-agent/",
   );
-  // Meta calls the webhook without a session; the route verifies the
-  // challenge token (GET) and the X-Hub-Signature-256 HMAC (POST) itself.
-  const isWhatsAppWebhookRoute =
-    request.nextUrl.pathname === "/api/whatsapp/webhook";
 
   if (
     !isAuthenticated &&
     !isLoginPage &&
     !isAuthRoute &&
-    !isHoloAgentRoute &&
-    !isWhatsAppWebhookRoute
+    !isHoloAgentRoute
   ) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";

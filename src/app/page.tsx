@@ -6,25 +6,19 @@ import AppShell, { Icon } from "@/components/app-shell";
 import SingleSmsComposer from "@/components/sms/single-sms-composer";
 import { createClient } from "@/lib/supabase/server";
 import {
-  buildFollowupCandidates,
-  type CustomerForFollowup,
-  type FollowupForScoring,
-} from "@/lib/sales/followup-priority";
+  classifyFollowupNeed,
+  latestContactByCustomer,
+  RECENT_CONTACT_DAYS,
+  SINGLE_PURCHASE_FOLLOWUP_DAYS,
+  type FollowupNeed,
+} from "@/lib/sales/followup-need";
 import styles from "./today.module.css";
 import { tehranDateKey as sharedTehranDateKey } from "@/lib/finance/metrics";
 
 const number = new Intl.NumberFormat("fa-IR");
 const DAILY_TARGET = 15;
 
-const allowedViews = new Set([
-  "all",
-  "today",
-  "overdue",
-  "quote",
-  "reorder",
-  "prospect",
-  "debt",
-]);
+const allowedViews = new Set(["needs", "ok"]);
 
 const allowedOutcomes = new Set([
   "no_answer",
@@ -36,28 +30,28 @@ const allowedOutcomes = new Set([
   "lost",
 ]);
 
-type WorkspaceCustomer = CustomerForFollowup & {
-  lead_stage: string | null;
-  potential_value: number | string | null;
-  archived_at: string | null;
+type WorkspaceCustomer = {
+  id: string;
+  name: string;
+  phone: string | null;
   city: string | null;
+  status: string;
+  next_followup_at: string | null;
+  last_purchase_at: string | null;
+  purchase_count: number | string | null;
+  total_sales: number | string | null;
+  avg_purchase_gap_days: number | string | null;
+  days_since_last_purchase: number | string | null;
   holo_balance_amount: number | string | null;
   holo_balance_status: string | null;
   holo_last_synced_at: string | null;
 };
 
-type ExtendedFollowup = FollowupForScoring & {
-  potential_value: number | string | null;
-};
-
-type OpportunityRow = {
-  id: string;
+type FollowupRow = {
   customer_id: string;
-  status: string;
-  stage: string;
-  product_interest: string | null;
-  next_followup_at: string | null;
-  estimated_value: number | string | null;
+  followup_at: string;
+  outcome: string;
+  potential_value: number | string | null;
 };
 
 type DailySalesRow = {
@@ -65,39 +59,9 @@ type DailySalesRow = {
   invoiced_sales_amount: number | string;
 };
 
-type Candidate = ReturnType<
-  typeof buildFollowupCandidates
->[number];
-
 type WorkspaceItem = {
   customer: WorkspaceCustomer;
-  score: number;
-  reasons: string[];
-  isToday: boolean;
-  isOverdue: boolean;
-  isReorder: boolean;
-  isQuote: boolean;
-  isProspect: boolean;
-  isDebt: boolean;
-  debtAmount: number;
-  opportunity: OpportunityRow | null;
-};
-
-const priorityLabels: Record<string, string> = {
-  low: "کم",
-  normal: "متوسط",
-  high: "زیاد",
-  vip: "ویژه",
-};
-
-const leadStageLabels: Record<string, string> = {
-  new: "سرنخ جدید",
-  contacted: "تماس گرفته شد",
-  interested: "علاقه‌مند",
-  quoted: "قیمت دریافت کرده",
-  decision: "در حال تصمیم‌گیری",
-  converted: "تبدیل شده",
-  lost: "از دست رفته",
+  need: FollowupNeed;
 };
 
 const savedMessages: Record<string, string> = {
@@ -155,13 +119,7 @@ function addTehranDaysAtTen(days: number) {
 }
 
 function safeView(value: string | null | undefined) {
-  return value && allowedViews.has(value) ? value : "all";
-}
-
-function isDue(value: string | null | undefined) {
-  return Boolean(
-    value && new Date(value).getTime() <= Date.now(),
-  );
+  return value && allowedViews.has(value) ? value : "needs";
 }
 
 async function collectAllRows<T>(
@@ -177,30 +135,8 @@ async function collectAllRows<T>(
   }
 }
 
-function defaultSmsText(item: WorkspaceItem) {
-  const name = item.customer.name;
-
-  if (item.isDebt) {
-    return `${name} گرامی، وقت بخیر. مانده حساب مجموعه شما مبلغ ${formatMoney(
-      item.debtAmount,
-    )} تومان است. لطفاً در اولین فرصت نسبت به تسویه اقدام فرمایید. امیدمِد`;
-  }
-
-  if (item.isQuote) {
-    return `${name} گرامی، وقت بخیر. برای پیگیری قیمت ${
-      item.opportunity?.product_interest || "محصول موردنظر"
-    } و بررسی نیاز فعلی مجموعه شما در خدمتتان هستیم. امیدمِد`;
-  }
-
-  if (item.isProspect) {
-    return `${name} گرامی، وقت بخیر. امیدمِد تأمین‌کننده تخصصی پد، ملحفه، کیف و لوازم مصرفی فیزیوتراپی است. برای بررسی نیاز مجموعه شما در خدمتتان هستیم.`;
-  }
-
-  if (item.isReorder) {
-    return `${name} گرامی، وقت بخیر. با توجه به زمان آخرین سفارش شما، برای تأمین مجدد لوازم مصرفی فیزیوتراپی در خدمتتان هستیم. امیدمِد`;
-  }
-
-  return `${name} گرامی، وقت بخیر. طبق پیگیری قبلی برای بررسی نیاز فعلی مجموعه شما در خدمتتان هستیم. امیدمِد`;
+function defaultSmsText(customer: WorkspaceCustomer) {
+  return `${customer.name} گرامی، وقت بخیر. با توجه به زمان آخرین سفارش شما، برای تأمین مجدد لوازم مصرفی فیزیوتراپی در خدمتتان هستیم. امیدمِد`;
 }
 
 function outcomeNextFollowup(outcome: string) {
@@ -225,7 +161,7 @@ async function saveQuickFollowup(formData: FormData) {
     formData.get("outcome") ?? "",
   ).trim();
   const returnView = safeView(
-    String(formData.get("return_view") ?? "all"),
+    String(formData.get("return_view") ?? "needs"),
   );
   const requestId = String(formData.get("request_id") ?? "").trim();
 
@@ -276,55 +212,6 @@ async function saveQuickFollowup(formData: FormData) {
   redirect(`/?view=${returnView}&saved=${outcome}`);
 }
 
-function mergeWorkspaceItem(
-  map: Map<string, WorkspaceItem>,
-  customer: WorkspaceCustomer,
-  patch: Partial<WorkspaceItem> & {
-    score?: number;
-    reasons?: string[];
-  },
-) {
-  const current = map.get(customer.id) ?? {
-    customer,
-    score: 0,
-    reasons: [],
-    isToday: false,
-    isOverdue: false,
-    isReorder: false,
-    isQuote: false,
-    isProspect: false,
-    isDebt: false,
-    debtAmount: 0,
-    opportunity: null,
-  };
-
-  map.set(customer.id, {
-    ...current,
-    ...patch,
-    customer,
-    score: Math.max(current.score, patch.score ?? 0),
-    reasons: Array.from(
-      new Set([
-        ...current.reasons,
-        ...(patch.reasons ?? []),
-      ]),
-    ).slice(0, 4),
-    isToday: current.isToday || Boolean(patch.isToday),
-    isOverdue: current.isOverdue || Boolean(patch.isOverdue),
-    isReorder: current.isReorder || Boolean(patch.isReorder),
-    isQuote: current.isQuote || Boolean(patch.isQuote),
-    isProspect:
-      current.isProspect || Boolean(patch.isProspect),
-    isDebt: current.isDebt || Boolean(patch.isDebt),
-    debtAmount: Math.max(
-      current.debtAmount,
-      patch.debtAmount ?? 0,
-    ),
-    opportunity:
-      patch.opportunity ?? current.opportunity ?? null,
-  });
-}
-
 export default async function Home({
   searchParams,
 }: {
@@ -341,35 +228,22 @@ export default async function Home({
   const supabase = await createClient();
   const todayKey = tehranDateKey();
 
-  const [
-    customerResult,
-    followupResult,
-    opportunityResult,
-    dailySalesResult,
-  ] = await Promise.all([
+  const [customerResult, followupResult, dailySalesResult] = await Promise.all([
     collectAllRows<WorkspaceCustomer>((from, to) =>
       supabase
         .from("customer_crm_summary")
-        .select("id,name,phone,status,priority,lead_stage,potential_value,archived_at,city,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at")
+        .select("id,name,phone,city,status,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at")
         .is("archived_at", null)
         .order("id")
         .range(from, to) as unknown as Promise<{ data: WorkspaceCustomer[] | null; error: { message: string } | null }>,
     ),
-    collectAllRows<ExtendedFollowup>((from, to) =>
+    collectAllRows<FollowupRow>((from, to) =>
       supabase
         .from("followups")
-        .select("customer_id,followup_at,outcome,next_followup_at,notes,potential_value")
+        .select("customer_id,followup_at,outcome,potential_value")
         .order("followup_at", { ascending: false })
         .order("id")
-        .range(from, to) as unknown as Promise<{ data: ExtendedFollowup[] | null; error: { message: string } | null }>,
-    ),
-    collectAllRows<OpportunityRow>((from, to) =>
-      supabase
-        .from("sales_opportunities")
-        .select("id,customer_id,status,stage,product_interest,next_followup_at,estimated_value")
-        .in("status", ["open", "on_hold"])
-        .order("id")
-        .range(from, to) as unknown as Promise<{ data: OpportunityRow[] | null; error: { message: string } | null }>,
+        .range(from, to) as unknown as Promise<{ data: FollowupRow[] | null; error: { message: string } | null }>,
     ),
     supabase
       .from("owner_sales_daily")
@@ -380,215 +254,61 @@ export default async function Home({
 
   const customers = customerResult.data;
   const followups = followupResult.data;
-  const opportunities = opportunityResult.data;
   const dailySales = dailySalesResult.data as DailySalesRow | null;
+  const lastContact = latestContactByCustomer(followups);
 
-  const customerMap = new Map(
-    customers.map((customer) => [customer.id, customer]),
-  );
+  const items: WorkspaceItem[] = customers.map((customer) => ({
+    customer,
+    need: classifyFollowupNeed(customer, lastContact.get(customer.id) ?? null),
+  }));
+  const byValue = (a: WorkspaceItem, b: WorkspaceItem) =>
+    numeric(b.customer.total_sales) - numeric(a.customer.total_sales);
+  const needsItems = items.filter((item) => item.need.needsFollowup).sort(byValue);
+  const okItems = items.filter((item) => !item.need.needsFollowup).sort(byValue);
+  const listItems = view === "ok" ? okItems : needsItems;
 
-  const scoredCandidates = buildFollowupCandidates({
-    customers,
-    followups,
-  }) as Candidate[];
-
-  const itemMap = new Map<string, WorkspaceItem>();
-
-  for (const candidate of scoredCandidates) {
-    const customer = customerMap.get(candidate.id);
-    if (!customer) continue;
-
-    mergeWorkspaceItem(itemMap, customer, {
-      score: candidate.score,
-      reasons: candidate.reasons,
-      isToday:
-        candidate.isScheduled && !candidate.isOverdue,
-      isOverdue: candidate.isOverdue,
-      isReorder: candidate.isPurchaseDue,
-      isQuote: candidate.isRequestedPrice,
-    });
-  }
-
-  for (const customer of customers) {
-    if (customer.status !== "prospect") continue;
-
-    const stage = customer.lead_stage || "new";
-    const stageScore: Record<string, number> = {
-      new: 62,
-      contacted: 68,
-      interested: 76,
-      quoted: 84,
-      decision: 90,
-    };
-
-    mergeWorkspaceItem(itemMap, customer, {
-      score:
-        stageScore[stage] ??
-        (customer.priority === "vip" ? 75 : 58),
-      reasons: [
-        leadStageLabels[stage] || "مشتری بالقوه",
-        customer.next_followup_at &&
-        isDue(customer.next_followup_at)
-          ? "موعد پیگیری سرنخ رسیده است"
-          : "باید به مرحله بعدی قیف فروش منتقل شود",
-      ],
-      isToday: Boolean(
-        customer.next_followup_at &&
-          isDue(customer.next_followup_at),
-      ),
-      isProspect: true,
-    });
-  }
-
-  for (const opportunity of opportunities) {
-    const customer = customerMap.get(opportunity.customer_id);
-    if (!customer) continue;
-
-    const due = isDue(opportunity.next_followup_at);
-    mergeWorkspaceItem(itemMap, customer, {
-      score:
-        (due ? 102 : 78) +
-        (opportunity.stage === "final_followup" ? 12 : 0),
-      reasons: [
-        due
-          ? "موعد پیگیری قیمت رسیده است"
-          : "فرصت فروش باز دارد",
-        opportunity.product_interest
-          ? `محصول هدف: ${opportunity.product_interest}`
-          : "محصول هدف ثبت نشده است",
-      ],
-      isToday: due,
-      isQuote: true,
-      opportunity,
-    });
-  }
-
-  const debtByCustomer = new Map<string, number>();
-
-  for (const customer of customers) {
-    if (customer.holo_balance_status !== "debtor") continue;
-    const amount = numeric(customer.holo_balance_amount);
-    if (amount > 0) debtByCustomer.set(customer.id, amount);
-  }
-
-  for (const [customerId, debtAmount] of debtByCustomer) {
-    const customer = customerMap.get(customerId);
-    if (!customer) continue;
-
-    mergeWorkspaceItem(itemMap, customer, {
-      score: 94 + Math.min(20, Math.floor(debtAmount / 5_000_000)),
-      reasons: [
-        `مانده بدهی ${formatMoney(debtAmount)} تومان`,
-        "نیازمند پیگیری مودبانه تسویه",
-      ],
-      isDebt: true,
-      debtAmount,
-    });
-  }
-
-  const allItems = Array.from(itemMap.values()).sort(
-    (a, b) =>
-      b.score - a.score ||
-      numeric(b.customer.total_sales) -
-        numeric(a.customer.total_sales),
-  );
-
-  const filteredItems = allItems.filter((item) => {
-    if (view === "today") return item.isToday;
-    if (view === "overdue") return item.isOverdue;
-    if (view === "quote") return item.isQuote;
-    if (view === "reorder") return item.isReorder;
-    if (view === "prospect") return item.isProspect;
-    if (view === "debt") return item.isDebt;
-    return true;
-  });
-
-  const pageSize = 60;
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(listItems.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
-  const visibleItems = filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const visibleItems = listItems.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  const todayStart = new Date(
-    `${todayKey}T00:00:00+03:30`,
-  ).getTime();
-  const todayEnd = new Date(
-    `${todayKey}T23:59:59.999+03:30`,
-  ).getTime();
-
+  const todayStart = new Date(`${todayKey}T00:00:00+03:30`).getTime();
+  const todayEnd = new Date(`${todayKey}T23:59:59.999+03:30`).getTime();
   const todayFollowups = followups.filter((item) => {
     const value = new Date(item.followup_at).getTime();
     return value >= todayStart && value <= todayEnd;
   });
 
-  const crmOrdersToday = todayFollowups.filter(
-    (item) => item.outcome === "order_placed",
-  );
+  const lastSyncedAt = customers.reduce<string | null>((latest, customer) => {
+    const value = customer.holo_last_synced_at;
+    return value && (!latest || value > latest) ? value : latest;
+  }, null);
 
-  const crmOrderValueToday = crmOrdersToday.reduce(
-    (sum, item) => sum + numeric(item.potential_value),
-    0,
-  );
-
-  const activePipelineValue = opportunities.reduce(
-    (sum, item) => sum + numeric(item.estimated_value),
-    0,
-  );
-
-  const dueTodayCount = allItems.filter(
-    (item) => item.isToday,
-  ).length;
-  const overdueCount = allItems.filter(
-    (item) => item.isOverdue,
-  ).length;
-  const quoteCount = allItems.filter(
-    (item) => item.isQuote,
-  ).length;
-  const prospectCount = customers.filter(
-    (item) => item.status === "prospect",
-  ).length;
-  const totalDebt = Array.from(debtByCustomer.values()).reduce(
-    (sum, value) => sum + value,
-    0,
-  );
-  const progress = Math.min(
-    100,
-    Math.round(
-      (todayFollowups.length / DAILY_TARGET) * 100,
-    ),
-  );
+  const totalDebt = customers
+    .filter((customer) => customer.holo_balance_status === "debtor")
+    .reduce((sum, customer) => sum + numeric(customer.holo_balance_amount), 0);
 
   const queryError =
-    customerResult.error ||
-    followupResult.error ||
-    opportunityResult.error ||
-    dailySalesResult.error;
+    customerResult.error || followupResult.error || dailySalesResult.error;
 
   const actionError =
     params.error === "save"
       ? "ثبت نتیجه انجام نشد. دوباره تلاش کن."
-      : params.error === "update"
-        ? "نتیجه ثبت شد، اما پرونده مشتری به‌روزرسانی نشد."
-        : params.error === "customer"
-          ? "پرونده مشتری پیدا نشد."
-          : params.error === "invalid"
-            ? "اطلاعات نتیجه تماس معتبر نبود."
-            : null;
+      : params.error === "invalid"
+        ? "اطلاعات نتیجه تماس معتبر نبود."
+        : null;
 
   return (
     <AppShell
       active="home"
-      title="مرکز فرمان فروش امروز"
-      subtitle="هر روز از همین صفحه شروع کن؛ اولویت‌ها، سرنخ‌ها، قیمت‌ها، خرید مجدد و وصول مطالبات کنار هم هستند."
+      title="پیگیری مشتریان"
+      subtitle="مشتری‌ها بر اساس فاکتورهای قبلی‌شان در هلو به دو گروه تقسیم شده‌اند."
     >
       {params.saved && savedMessages[params.saved] ? (
-        <div className={styles.notice}>
-          {savedMessages[params.saved]}
-        </div>
+        <div className={styles.notice}>{savedMessages[params.saved]}</div>
       ) : null}
 
-      {actionError ? (
-        <div className={styles.error}>{actionError}</div>
-      ) : null}
+      {actionError ? <div className={styles.error}>{actionError}</div> : null}
 
       {queryError ? (
         <div className={styles.error}>
@@ -596,140 +316,60 @@ export default async function Home({
         </div>
       ) : null}
 
-      <section className={styles.hero}>
-        <div className={styles.heroText}>
-          <span className={styles.heroEyebrow}>
-            برنامه عملیاتی امروز
-          </span>
-
-          <h2>
-            {visibleItems.length
-              ? `از ${number.format(
-                  Math.min(10, visibleItems.length),
-                )} اقدام اول شروع کن`
-              : "صف فوری امروز خالی است"}
-          </h2>
-
-          <p>
-            فهرست براساس پیگیری عقب‌افتاده، قیمت باز،
-            چرخه خرید، مشتری بالقوه، مانده حساب و ارزش
-            مشتری امتیازدهی شده است.
-          </p>
-        </div>
-
-        <div className={styles.heroActions}>
-          <a className={styles.heroPrimary} href="#work-queue">
-            <Icon name="phone" size={18} />
-            شروع پیگیری
-          </a>
-
-          <Link className={styles.heroSecondary} href="/sales">
-            <Icon name="followup" size={18} />
-            مشاهده قیف فروش
-          </Link>
-
-          <Link
-            className={styles.heroSecondary}
-            href="/customers/new?type=prospect"
-          >
-            + افزودن سرنخ
-          </Link>
-        </div>
-      </section>
-
       <section className={styles.statsGrid}>
         <article>
-          <span>اقدام‌های امروز</span>
+          <span>نیاز به پیگیری</span>
+          <strong>{number.format(needsItems.length)}</strong>
+          <small>مشتری</small>
+        </article>
+
+        <article>
+          <span>نیاز به پیگیری ندارد</span>
+          <strong>{number.format(okItems.length)}</strong>
+          <small>مشتری</small>
+        </article>
+
+        <article>
+          <span>تماس‌های ثبت‌شده امروز</span>
           <strong>{number.format(todayFollowups.length)}</strong>
           <small>از هدف روزانه {number.format(DAILY_TARGET)}</small>
         </article>
 
         <article>
-          <span>موعد امروز</span>
-          <strong>{number.format(dueTodayCount)}</strong>
-          <small>{number.format(overdueCount)} مورد عقب‌افتاده</small>
-        </article>
-
-        <article>
-          <span>قیمت‌های باز</span>
-          <strong>{number.format(quoteCount)}</strong>
-          <small>
-            ارزش قیف {formatMoney(activePipelineValue)} تومان
-          </small>
-        </article>
-
-        <article>
-          <span>مشتریان بالقوه</span>
-          <strong>{number.format(prospectCount)}</strong>
-          <small>در مراحل مختلف قیف فروش</small>
-        </article>
-
-        <article>
           <span>فروش فاکتورشده امروز</span>
           <strong>{number.format(numeric(dailySales?.invoice_count))}</strong>
-          <small>{formatMoney(dailySales?.invoiced_sales_amount)} تومان از فاکتور معتبر هلو</small>
+          <small>{formatMoney(dailySales?.invoiced_sales_amount)} تومان</small>
         </article>
 
         <article>
-          <span>توافق/سفارش CRM امروز</span>
-          <strong>{number.format(crmOrdersToday.length)}</strong>
-          <small>{formatMoney(crmOrderValueToday)} تومان ارزش CRM؛ فاکتور حسابداری نیست</small>
+          <span>مانده بدهکاران</span>
+          <strong className={styles.compactValue}>{formatMoney(totalDebt)}</strong>
+          <small>تومان طبق مانده حساب هلو</small>
         </article>
-
-        <article>
-          <span>مانده قابل پیگیری</span>
-          <strong className={styles.compactValue}>
-            {formatMoney(totalDebt)}
-          </strong>
-          <small>تومان طبق آخرین فایل هلو</small>
-        </article>
-      </section>
-
-      <section className={styles.progressCard}>
-        <div>
-          <span>پیشرفت برنامه تماس امروز</span>
-          <strong>
-            {number.format(todayFollowups.length)} از{" "}
-            {number.format(DAILY_TARGET)} اقدام
-          </strong>
-        </div>
-
-        <div className={styles.progressTrack}>
-          <span style={{ width: `${progress}%` }} />
-        </div>
-
-        <b>{number.format(progress)}٪</b>
       </section>
 
       <section className={styles.workspace} id="work-queue">
         <article className={styles.mainPanel}>
           <header className={styles.panelHeader}>
             <div>
-              <span>صف کار فروش</span>
-              <h3>مشتریان مناسب اقدام بعدی</h3>
+              <span>مرتب‌شده از بیشترین خرید قبلی</span>
+              <h3>{view === "ok" ? "مشتریانی که فعلاً نیاز به پیگیری ندارند" : "مشتریانی که باید پیگیری شوند"}</h3>
             </div>
 
             <span className={styles.resultCount}>
-              {number.format(filteredItems.length)} نتیجه
+              {number.format(listItems.length)} مشتری
             </span>
           </header>
 
           <nav className={styles.tabs}>
             {[
-              ["all", "همه"],
-              ["today", "موعد امروز"],
-              ["overdue", "عقب‌افتاده"],
-              ["quote", "قیمت باز"],
-              ["reorder", "خرید مجدد"],
-              ["prospect", "بالقوه"],
-              ["debt", "تسویه"],
+              ["needs", `نیاز به پیگیری (${number.format(needsItems.length)})`],
+              ["ok", `نیاز به پیگیری ندارد (${number.format(okItems.length)})`],
             ].map(([key, label]) => (
               <Link
                 key={key}
                 href={`/?view=${key}`}
-                className={`${styles.tab} ${
-                  view === key ? styles.tabActive : ""
-                }`}
+                className={`${styles.tab} ${view === key ? styles.tabActive : ""}`}
               >
                 {label}
               </Link>
@@ -738,94 +378,30 @@ export default async function Home({
 
           {visibleItems.length ? (
             <div className={styles.list}>
-              {visibleItems.map((item) => {
-                const customer = item.customer;
-                const phoneLink = normalizePhoneForLink(
-                  customer.phone,
-                );
-                const daysSince = numeric(
-                  customer.days_since_last_purchase,
-                );
-                const averageGap = numeric(
-                  customer.avg_purchase_gap_days,
-                );
+              {visibleItems.map(({ customer, need }) => {
+                const phoneLink = normalizePhoneForLink(customer.phone);
+                const daysSince = customer.days_since_last_purchase;
 
                 return (
-                  <article
-                    className={styles.item}
-                    key={customer.id}
-                  >
+                  <article className={styles.item} key={customer.id}>
                     <div className={styles.itemTop}>
-                      <div className={styles.score}>
-                        {number.format(item.score)}
-                        <small>امتیاز</small>
-                      </div>
-
                       <div className={styles.identity}>
                         <h4>
-                          <Link
-                            href={`/customers/${customer.id}`}
-                          >
-                            {customer.name}
-                          </Link>
+                          <Link href={`/customers/${customer.id}`}>{customer.name}</Link>
                         </h4>
-
                         <p>
-                          {customer.phone ||
-                            "شماره تماس ثبت نشده"}
-                          {customer.city
-                            ? ` · ${customer.city}`
-                            : ""}
+                          {customer.phone || "شماره تماس ثبت نشده"}
+                          {customer.city ? ` · ${customer.city}` : ""}
                         </p>
                       </div>
 
                       <div className={styles.badges}>
-                        {item.isOverdue ? (
-                          <span
-                            className={`${styles.badge} ${styles.badgeUrgent}`}
-                          >
-                            عقب‌افتاده
-                          </span>
-                        ) : item.isToday ? (
-                          <span
-                            className={`${styles.badge} ${styles.badgeDue}`}
-                          >
-                            موعد اقدام
-                          </span>
-                        ) : null}
-
-                        {item.isQuote ? (
-                          <span
-                            className={`${styles.badge} ${styles.badgePrice}`}
-                          >
-                            قیمت باز
-                          </span>
-                        ) : null}
-
-                        {item.isProspect ? (
-                          <span
-                            className={`${styles.badge} ${styles.badgeProspect}`}
-                          >
-                            {leadStageLabels[
-                              customer.lead_stage || "new"
-                            ] || "بالقوه"}
-                          </span>
-                        ) : null}
-
-                        {item.isDebt ? (
-                          <span
-                            className={`${styles.badge} ${styles.badgeDebt}`}
-                          >
-                            تسویه
-                          </span>
-                        ) : null}
-
                         <span
-                          className={`${styles.badge} ${styles.badgeVip}`}
+                          className={`${styles.badge} ${
+                            need.needsFollowup ? styles.badgeUrgent : styles.badgeDue
+                          }`}
                         >
-                          اولویت{" "}
-                          {priorityLabels[customer.priority] ??
-                            customer.priority}
+                          {need.needsFollowup ? "نیاز به پیگیری" : "فعلاً نیاز ندارد"}
                         </span>
                       </div>
                     </div>
@@ -833,69 +409,29 @@ export default async function Home({
                     <div className={styles.meta}>
                       <div>
                         <span>آخرین خرید</span>
-                        <strong>
-                          {formatDate(customer.last_purchase_at)}
-                        </strong>
+                        <strong>{formatDate(customer.last_purchase_at)}</strong>
                       </div>
-
                       <div>
                         <span>روز از خرید</span>
-                        <strong>
-                          {daysSince
-                            ? number.format(daysSince)
-                            : "—"}
-                        </strong>
+                        <strong>{daysSince == null ? "—" : number.format(numeric(daysSince))}</strong>
                       </div>
-
                       <div>
-                        <span>چرخه معمول</span>
-                        <strong>
-                          {averageGap
-                            ? `${number.format(
-                                Math.round(averageGap),
-                              )} روز`
-                            : "نامشخص"}
-                        </strong>
+                        <span>تعداد فاکتور</span>
+                        <strong>{number.format(numeric(customer.purchase_count))}</strong>
                       </div>
-
                       <div>
-                        <span>ارزش مشتری / سرنخ</span>
-                        <strong>
-                          {formatMoney(
-                            customer.status === "prospect"
-                              ? customer.potential_value
-                              : customer.total_sales,
-                          )}
-                        </strong>
+                        <span>جمع خرید</span>
+                        <strong>{formatMoney(customer.total_sales)}</strong>
                       </div>
-
-                      {item.isDebt ? (
-                        <div>
-                          <span>مانده حساب</span>
-                          <strong>
-                            {formatMoney(item.debtAmount)}
-                          </strong>
-                        </div>
-                      ) : null}
                     </div>
 
                     <div className={styles.reasons}>
-                      {item.reasons.map((reason) => (
-                        <span
-                          className={styles.reason}
-                          key={reason}
-                        >
-                          {reason}
-                        </span>
-                      ))}
+                      <span className={styles.reason}>{need.reason}</span>
                     </div>
 
                     <div className={styles.actions}>
                       {phoneLink ? (
-                        <a
-                          className={styles.call}
-                          href={`tel:${phoneLink}`}
-                        >
+                        <a className={styles.call} href={`tel:${phoneLink}`}>
                           <Icon name="phone" size={15} />
                           تماس
                         </a>
@@ -905,22 +441,12 @@ export default async function Home({
                         customerId={customer.id}
                         customerName={customer.name}
                         phone={customer.phone}
-                        source={
-                          item.isDebt
-                            ? "accounting"
-                            : item.isQuote
-                              ? "quote"
-                              : "customer"
-                        }
-                        opportunityId={item.opportunity?.id}
-                        defaultText={defaultSmsText(item)}
+                        source="customer"
+                        defaultText={defaultSmsText(customer)}
                         compact
                       />
 
-                      <Link
-                        className={styles.profile}
-                        href={`/customers/${customer.id}`}
-                      >
+                      <Link className={styles.profile} href={`/customers/${customer.id}`}>
                         پرونده
                       </Link>
 
@@ -928,34 +454,14 @@ export default async function Home({
                         ["no_answer", "پاسخ نداد"],
                         ["requested_price", "قیمت خواست"],
                         ["order_placed", "سفارش شد"],
-                        ["payment_pending", "تسویه"],
                         ["no_need", "فعلاً نیاز ندارد"],
                       ].map(([outcome, label]) => (
-                        <form
-                          className={styles.quickForm}
-                          action={saveQuickFollowup}
-                          key={outcome}
-                        >
-                          <input
-                            type="hidden"
-                            name="customer_id"
-                            value={customer.id}
-                          />
+                        <form className={styles.quickForm} action={saveQuickFollowup} key={outcome}>
+                          <input type="hidden" name="customer_id" value={customer.id} />
                           <input type="hidden" name="request_id" value={crypto.randomUUID()} />
-                          <input
-                            type="hidden"
-                            name="outcome"
-                            value={outcome}
-                          />
-                          <input
-                            type="hidden"
-                            name="return_view"
-                            value={view}
-                          />
-                          <button
-                            className={styles.quickButton}
-                            type="submit"
-                          >
+                          <input type="hidden" name="outcome" value={outcome} />
+                          <input type="hidden" name="return_view" value={view} />
+                          <button className={styles.quickButton} type="submit">
                             {label}
                           </button>
                         </form>
@@ -970,15 +476,14 @@ export default async function Home({
               <div className={styles.emptyIcon}>
                 <Icon name="check" size={29} />
               </div>
-              <h4>در این دسته اقدام بازی باقی نمانده است</h4>
-              <p>
-                فیلتر دیگری را انتخاب کن یا مشتری بالقوه
-                جدیدی به قیف فروش اضافه کن.
-              </p>
+              <h4>
+                {view === "ok" ? "مشتری‌ای در این گروه نیست" : "فعلاً مشتری‌ای نیاز به پیگیری ندارد"}
+              </h4>
             </div>
           )}
+
           {totalPages > 1 ? (
-            <nav className={styles.tabs} aria-label="صفحه‌بندی صف فروش">
+            <nav className={styles.tabs} aria-label="صفحه‌بندی">
               {safePage > 1 ? <Link href={`/?view=${view}&page=${safePage - 1}`}>صفحه قبل</Link> : null}
               <span>صفحه {number.format(safePage)} از {number.format(totalPages)}</span>
               {safePage < totalPages ? <Link href={`/?view=${view}&page=${safePage + 1}`}>صفحه بعد</Link> : null}
@@ -988,66 +493,30 @@ export default async function Home({
 
         <aside className={styles.sidePanel}>
           <section className={styles.sideSection}>
-            <h3>اولویت شروع امروز</h3>
-
-            <div className={styles.planList}>
-              <div className={styles.planRow}>
-                <span>عقب‌افتاده‌ها</span>
-                <strong>{number.format(overdueCount)}</strong>
-              </div>
-
-              <div className={styles.planRow}>
-                <span>قیمت‌های موعددار</span>
-                <strong>
-                  {number.format(
-                    allItems.filter(
-                      (item) =>
-                        item.isQuote && item.isToday,
-                    ).length,
-                  )}
-                </strong>
-              </div>
-
-              <div className={styles.planRow}>
-                <span>سرنخ‌های بالقوه</span>
-                <strong>{number.format(prospectCount)}</strong>
-              </div>
-
-              <div className={styles.planRow}>
-                <span>پیگیری تسویه</span>
-                <strong>
-                  {number.format(debtByCustomer.size)}
-                </strong>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.sideSection}>
-            <h3>مسیر کار پیشنهادی</h3>
-
+            <h3>قانون تقسیم‌بندی</h3>
             <ol className={styles.tipList}>
-              <li>اول پیگیری‌های عقب‌افتاده و قیمت‌های باز.</li>
-              <li>بعد مشتریان موعد خرید مجدد و ویژه.</li>
-              <li>سپس سرنخ‌های بالقوه و فروش مکمل.</li>
-              <li>نتیجه هر تماس را همان لحظه ثبت کن.</li>
+              <li>اگر خودتان تاریخ پیگیری گذاشته‌اید و آن تاریخ رسیده، نیاز به پیگیری دارد.</li>
+              <li>مشتری با چند خرید: وقتی از آخرین خریدش به اندازه فاصله معمول خریدهایش گذشته باشد.</li>
+              <li>مشتری با یک خرید: وقتی {number.format(SINGLE_PURCHASE_FOLLOWUP_DAYS)} روز از خریدش گذشته باشد.</li>
+              <li>هر تماسی که ثبت کنید، مشتری را تا {number.format(RECENT_CONTACT_DAYS)} روز (یا تا تاریخ پیگیری بعدی) از این فهرست خارج می‌کند.</li>
             </ol>
-
-            <Link className={styles.syncLink} href="/sales">
-              بازکردن قیف کامل فروش
-            </Link>
-
-            <Link className={styles.syncLink} href="/import/holo">
-              به‌روزرسانی اطلاعات هلو
-            </Link>
           </section>
 
           <section className={styles.sideSection}>
-            <h3>نکته داده</h3>
+            <h3>داده‌ها</h3>
             <p className={styles.muted}>
-              مانده حساب و خریدهای جدید فقط به اندازه آخرین
-              همگام‌سازی هلو به‌روز هستند. قیف فروش و تماس‌ها
-              بلافاصله با ثبت نتیجه تغییر می‌کنند.
+              آخرین همگام‌سازی هلو:{" "}
+              {lastSyncedAt
+                ? new Intl.DateTimeFormat("fa-IR", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                    timeZone: "Asia/Tehran",
+                  }).format(new Date(lastSyncedAt))
+                : "ثبت نشده"}
             </p>
+            <Link className={styles.syncLink} href="/settings/holo-sync">
+              وضعیت اتصال هلو
+            </Link>
           </section>
         </aside>
       </section>
