@@ -6,6 +6,7 @@ import {
   configuredPatterns,
   fillPatternText,
   patternArgs,
+  patternItemsSummary,
   SMS_PATTERNS,
 } from "../src/lib/sms/patterns";
 
@@ -15,11 +16,31 @@ test("only patterns with a numeric bodyId are offered", () => {
   const keys = configuredPatterns({ MELIPAYAMAK_PATTERN_PAYMENT: "428065", MELIPAYAMAK_PATTERN_SHIPPED: "abc" }).map(
     (pattern) => pattern.key,
   );
-  assert.deepEqual(keys, ["payment"]);
+  // "order" is the pattern already approved in the panel and works by default.
+  assert.deepEqual(keys, ["order", "payment"]);
+  assert.deepEqual(
+    configuredPatterns({ MELIPAYAMAK_PATTERN_ORDER: "invalid" }).map((pattern) => pattern.key),
+    [],
+  );
+});
+
+test("order items are summarised to fit one pattern variable", () => {
+  assert.equal(
+    patternItemsSummary([
+      { product_name: "پد یکبار مصرف", quantity: 2 },
+      { product_name: "ملحفه", quantity: 1 },
+    ]),
+    "پد یکبار مصرف ۲ عدد، ملحفه ۱ عدد",
+  );
+  const many = Array.from({ length: 12 }, (_, index) => ({ product_name: `کالای شماره ${index}`, quantity: 1 }));
+  const summary = patternItemsSummary(many);
+  assert.ok(summary.length <= 80);
+  assert.match(summary, /قلم دیگر$/);
 });
 
 test("pattern texts follow Melipayamak service-line rules", () => {
-  for (const pattern of SMS_PATTERNS) {
+  // "order" was approved earlier with its own wording, amount included.
+  for (const pattern of SMS_PATTERNS.filter((item) => item.key !== "order")) {
     assert.match(pattern.text, /omidmed\.com$/, `${pattern.key} must end with the website`);
     assert.doesNotMatch(pattern.text, /تومان|مبلغ|لینک پرداخت|تخفیف/, `${pattern.key} must avoid payment amounts and promotions`);
   }
