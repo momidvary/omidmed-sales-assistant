@@ -86,13 +86,16 @@ export const SMS_PATTERNS: PatternDefinition[] = [
   },
 ];
 
-export function patternBodyId(pattern: PatternDefinition, env = process.env) {
+export function patternBodyId(
+  pattern: PatternDefinition,
+  env: Record<string, string | undefined> = process.env,
+) {
   const value = env[pattern.envVar]?.trim() ?? "";
   return /^\d{1,12}$/.test(value) ? Number(value) : null;
 }
 
 /** Patterns that have an approved bodyId configured on the server. */
-export function configuredPatterns(env = process.env) {
+export function configuredPatterns(env: Record<string, string | undefined> = process.env) {
   return SMS_PATTERNS.filter((pattern) => patternBodyId(pattern, env) !== null);
 }
 
