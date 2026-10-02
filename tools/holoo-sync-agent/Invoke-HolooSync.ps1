@@ -897,7 +897,14 @@ function Import-AgentState {
     }
 
     try {
-        $loaded = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $raw = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            throw "the file is empty"
+        }
+        $loaded = $raw | ConvertFrom-Json
+        if ($null -eq $loaded -or $loaded -is [array]) {
+            throw "the file does not contain a JSON object"
+        }
         foreach ($property in $state.PSObject.Properties.Name) {
             $loadedProperty = $loaded.PSObject.Properties[$property]
             if ($null -ne $loadedProperty) {
@@ -907,7 +914,14 @@ function Import-AgentState {
         return $state
     }
     catch {
-        throw "State file is invalid and was not changed: $StatePath"
+        # A damaged state file used to stop every scheduled run forever. The
+        # state only holds watermarks and run ids, and the receiver is
+        # idempotent, so keep the bad file for diagnosis and resync from
+        # scratch instead.
+        $backupPath = "{0}.invalid-{1}" -f $StatePath, (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+        Move-Item -LiteralPath $StatePath -Destination $backupPath -Force
+        Write-AgentLog -Level "WARN" -Message ("State file was unreadable ({0}); moved to {1}. A full resync will run." -f $_.Exception.Message, $backupPath)
+        return (New-DefaultState)
     }
 }
 
