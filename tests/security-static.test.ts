@@ -57,3 +57,18 @@ test("API routes do not assign ownership from request-body fields", () => {
   }
   assert.deepEqual(offenders, []);
 });
+
+test("Meta's unauthenticated webhook calls are not redirected to the login page", () => {
+  const proxy = readFileSync("src/lib/supabase/proxy.ts", "utf8");
+  assert.match(proxy, /pathname === "\/api\/whatsapp\/webhook"/);
+  const webhook = readFileSync("src/app/api/whatsapp/webhook/route.ts", "utf8");
+  assert.match(webhook, /verifyWebhookSignature\(/);
+});
+
+test("paged reads never rely on a single oversized Supabase range", () => {
+  // Supabase returns at most 1000 rows per request; a larger range silently truncates.
+  const offenders = sourceFiles
+    .filter((path) => /\.range\(0,\s*[1-9]\d{3,}\)/.test(readFileSync(path, "utf8")))
+    .map((path) => relative(process.cwd(), path));
+  assert.deepEqual(offenders, []);
+});

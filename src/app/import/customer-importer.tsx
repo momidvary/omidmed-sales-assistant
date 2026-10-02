@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { fetchCustomerIdsByCode } from "@/lib/supabase/customer-codes";
 import { Icon } from "@/components/app-shell";
 import styles from "./import.module.css";
 
@@ -165,14 +166,7 @@ export default function CustomerImporter() {
 
     try {
       const supabase = createClient();
-      const { data: existing, error: existingError } = await supabase
-        .from("customers")
-        .select("id,customer_code")
-        .not("customer_code", "is", null)
-        .range(0, 4999);
-
-      if (existingError) throw existingError;
-      const idByCode = new Map((existing ?? []).map((item) => [item.customer_code as string, item.id as string]));
+      const idByCode = await fetchCustomerIdsByCode(supabase);
       const records = rows.map((row) => {
         const record = toRecord(row);
         const id = idByCode.get(record.customer_code);

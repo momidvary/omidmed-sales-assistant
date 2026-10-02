@@ -198,6 +198,7 @@ async function fetchAllCampaignMembers(
       )
       .eq("campaign_id", campaignId)
       .order("created_at", { ascending: true })
+      .order("id")
       .range(offset, offset + 999);
     if (error) return { rows, failed: true };
     const page = (data ?? []) as CampaignMemberRow[];

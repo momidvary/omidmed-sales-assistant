@@ -145,6 +145,7 @@ async function fetchAllOpportunities(
         "id,customer_id,campaign_id,campaign_member_id,status,stage,source,product_interest,quoted_at,last_contact_at,next_followup_at,estimated_value,final_value,lost_reason,notes,created_at",
       )
       .order("next_followup_at", { ascending: true, nullsFirst: false })
+      .order("id")
       .range(offset, offset + 999);
     if (error) return { rows, error: true };
     const page = (data ?? []) as OpportunityRow[];
@@ -161,6 +162,7 @@ async function fetchAllCampaigns(
     const { data, error } = await supabase
       .from("campaigns")
       .select("id,name")
+      .order("id")
       .range(offset, offset + 999);
     if (error) return rows;
     const page = (data ?? []) as CampaignLite[];

@@ -155,6 +155,7 @@ async function readAllRows(table: string, select: string) {
     const { data, error } = await supabase
       .from(table)
       .select(select)
+      .order("id")
       .range(from, from + pageSize - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as unknown as Record<string, unknown>[]));

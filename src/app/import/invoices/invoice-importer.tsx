@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchCustomerIdsByCode } from "@/lib/supabase/customer-codes";
 import { Icon } from "@/components/app-shell";
 import {
   type CsvRow,
@@ -143,6 +144,7 @@ export default function InvoiceImporter() {
         .from("invoices")
         .select("external_key")
         .eq("source", "holo_qrp")
+        .order("id")
         .range(from, from + pageSize - 1);
 
       if (readError) throw readError;
@@ -166,20 +168,7 @@ export default function InvoiceImporter() {
 
     try {
       const supabase = createClient();
-      const { data: customers, error: customerError } = await supabase
-        .from("customers")
-        .select("id,customer_code")
-        .not("customer_code", "is", null)
-        .range(0, 4999);
-
-      if (customerError) throw customerError;
-
-      const idByCode = new Map(
-        (customers ?? []).map((customer) => [
-          customer.customer_code as string,
-          customer.id as string,
-        ]),
-      );
+      const idByCode = await fetchCustomerIdsByCode(supabase);
 
       const missingCodes = Array.from(
         new Set(

@@ -156,6 +156,8 @@ export default async function CustomersPage({
         .from("customer_product_summary")
         .select("customer_id")
         .ilike("product_name", `%${escapeLike(productSearch)}%`)
+        .order("customer_id")
+        .order("product_name")
         .range(rangeFrom, rangeFrom + 999);
       if (result.error) {
         productError = result.error;
@@ -186,6 +188,7 @@ export default async function CustomersPage({
     )
     .order("total_sales", { ascending: false })
     .order("created_at", { ascending: false })
+    .order("id")
     .range(from, to);
 
   if (statusFilter === "archived") {

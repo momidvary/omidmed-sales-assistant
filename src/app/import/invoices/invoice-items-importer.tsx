@@ -112,6 +112,7 @@ export default function InvoiceItemsImporter() {
         .from("invoices")
         .select("id,invoice_number")
         .eq("source", "holo_qrp")
+        .order("id")
         .range(from, from + pageSize - 1);
 
       if (readError) throw readError;
@@ -135,6 +136,7 @@ export default function InvoiceItemsImporter() {
       const { data, error: readError } = await supabase
         .from("invoice_items")
         .select("external_key")
+        .order("id")
         .range(from, from + pageSize - 1);
 
       if (readError) throw readError;
