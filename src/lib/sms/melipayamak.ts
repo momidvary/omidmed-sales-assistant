@@ -160,7 +160,7 @@ function providerStatus(json: ProviderJson, fallback = "") {
 }
 
 async function postToProvider(
-  path: "simple" | "multiple",
+  path: "simple" | "multiple" | "shared",
   payload: unknown,
 ): Promise<ProviderJson> {
   const token = process.env.MELIPAYAMAK_API_TOKEN?.trim();
@@ -302,5 +302,38 @@ export async function sendSimpleSms(input: {
     recId: result.recId,
     status: result.status,
     raw: result,
+  };
+}
+
+/**
+ * Sends an approved service-line pattern (وبسرویس خدماتی اشتراکی). The
+ * provider fills the approved text with `args` in order.
+ */
+export async function sendPatternSms(input: {
+  bodyId: number;
+  to: string;
+  args: string[];
+}) {
+  const response = await postToProvider("shared", {
+    bodyId: input.bodyId,
+    to: input.to,
+    args: input.args,
+  });
+
+  const [rawRecId = null] = collectRecIds(response).map((value) =>
+    value == null || value === "" ? null : String(value),
+  );
+  const recId = isRealRecId(rawRecId) ? rawRecId : null;
+  const status = providerStatus(response);
+  const success = Boolean(recId) || (!rawRecId && isSuccessStatus(status));
+
+  return {
+    success,
+    recId,
+    status: success
+      ? status
+      : rawRecId && !recId
+        ? `ملی پیامک ارسال را نپذیرفت؛ کد خطا ${rawRecId}`
+        : status || "سرویس ملی پیامک، ارسال با الگو را نپذیرفت.",
   };
 }
