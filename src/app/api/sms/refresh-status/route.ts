@@ -34,6 +34,7 @@ export async function POST() {
       .not("provider_rec_id", "is", null)
       .in("delivery_status", ["accepted", "unknown"])
       .order("created_at", { ascending: true })
+      .order("id")
       .range(offset, offset + pageSize - 1);
 
     if (error) {

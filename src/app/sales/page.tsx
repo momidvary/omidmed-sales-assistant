@@ -268,6 +268,7 @@ async function fetchAllPipelineCustomers(
         "id,name,phone,city,status,priority,lead_stage,potential_value,total_sales,next_followup_at,created_at",
       )
       .is("archived_at", null)
+      .order("id")
       .range(offset, offset + 999);
     if (error) return { rows, failed: true };
     const page = (data ?? []) as CustomerRow[];
@@ -287,6 +288,7 @@ async function fetchAllPipelineOpportunities(
         "id,customer_id,status,stage,product_interest,quoted_at,last_contact_at,next_followup_at,estimated_value,final_value,notes,created_at",
       )
       .order("created_at", { ascending: false })
+      .order("id")
       .range(offset, offset + 999);
     if (error) return { rows, failed: true };
     const page = (data ?? []) as OpportunityRow[];

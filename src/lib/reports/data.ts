@@ -72,6 +72,7 @@ export async function fetchAllSales(
         "id,customer_id,invoice_number,document_number,sale_date,amount,description",
       )
       .order("sale_date", { ascending: false })
+      .order("id")
       .range(start, start + PAGE_SIZE - 1);
 
     if (range.from) query = query.gte("sale_date", range.from);
@@ -95,6 +96,7 @@ export async function fetchAllCustomers(supabase: SupabaseClient) {
         "id,name,phone,normalized_phone,city,address,status,priority,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,next_followup_at",
       )
       .order("total_sales", { ascending: false })
+      .order("id")
       .range(start, start + PAGE_SIZE - 1);
 
     if (error) throw error;
@@ -117,6 +119,7 @@ export async function fetchAllFollowups(
         "id,customer_id,followup_at,channel,outcome,notes,next_followup_at,potential_value",
       )
       .order("followup_at", { ascending: false })
+      .order("id")
       .range(start, start + PAGE_SIZE - 1);
 
     const from = toTimestampStart(range.from);
@@ -146,6 +149,7 @@ export async function fetchAllInvoices(
       )
       .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
       .order("invoice_date", { ascending: false })
+      .order("id")
       .range(start, start + PAGE_SIZE - 1);
 
     if (range.from) query = query.gte("invoice_date", range.from);

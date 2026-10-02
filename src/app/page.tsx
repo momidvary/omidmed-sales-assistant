@@ -352,6 +352,7 @@ export default async function Home({
         .from("customer_crm_summary")
         .select("id,name,phone,status,priority,lead_stage,potential_value,archived_at,city,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase,holo_balance_amount,holo_balance_status,holo_last_synced_at")
         .is("archived_at", null)
+        .order("id")
         .range(from, to) as unknown as Promise<{ data: WorkspaceCustomer[] | null; error: { message: string } | null }>,
     ),
     collectAllRows<ExtendedFollowup>((from, to) =>
@@ -359,6 +360,7 @@ export default async function Home({
         .from("followups")
         .select("customer_id,followup_at,outcome,next_followup_at,notes,potential_value")
         .order("followup_at", { ascending: false })
+        .order("id")
         .range(from, to) as unknown as Promise<{ data: ExtendedFollowup[] | null; error: { message: string } | null }>,
     ),
     collectAllRows<OpportunityRow>((from, to) =>
@@ -366,6 +368,7 @@ export default async function Home({
         .from("sales_opportunities")
         .select("id,customer_id,status,stage,product_interest,next_followup_at,estimated_value")
         .in("status", ["open", "on_hold"])
+        .order("id")
         .range(from, to) as unknown as Promise<{ data: OpportunityRow[] | null; error: { message: string } | null }>,
     ),
     supabase
