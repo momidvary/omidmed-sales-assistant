@@ -65,7 +65,8 @@
   color: #4f6b67;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;

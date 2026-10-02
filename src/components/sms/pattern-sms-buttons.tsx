@@ -9,14 +9,23 @@ export type PatternOption = {
   button: string;
   description: string;
   text: string;
-  variables: Array<{ key: string; label: string; maxLength: number; placeholder?: string }>;
+  variables: Array<{
+    key: string;
+    label: string;
+    maxLength: number;
+    placeholder?: string;
+    options?: string[];
+    fill?: string;
+  }>;
 };
+
+export type PatternInvoice = { number: string; amount: string; items: string };
 
 type Props = {
   customerId: string;
   customerName: string;
   phone: string | null;
-  invoiceNumbers: string[];
+  invoices: PatternInvoice[];
   patterns: PatternOption[];
 };
 
@@ -34,7 +43,7 @@ function fill(text: string, args: string[]) {
   return text.replace(/\{(\d+)\}/g, (_, index: string) => args[Number(index)] || "…");
 }
 
-export default function PatternSmsButtons({ customerId, customerName, phone, invoiceNumbers, patterns }: Props) {
+export default function PatternSmsButtons({ customerId, customerName, phone, invoices, patterns }: Props) {
   const [active, setActive] = useState<PatternOption | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -53,11 +62,36 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
     setActive(pattern);
     setResult(null);
     requestId.current = null;
-    setValues({
+    const latest = invoices[0];
+    const sources: Record<string, string> = {
       name: customerName,
-      invoice: invoiceNumbers[0] ?? "",
+      title: "آقا",
+      lastName: customerName,
+      invoice: latest?.number ?? "",
+      amount: latest?.amount ?? "",
+      items: latest?.items ?? "",
       contact: storedContact(),
-      tracking: "",
+    };
+    setValues(
+      Object.fromEntries(
+        pattern.variables.map((variable) => [variable.key, variable.fill ? sources[variable.fill] ?? "" : ""]),
+      ),
+    );
+  }
+
+  function update(variableKey: string, value: string) {
+    setValues((current) => {
+      const next = { ...current, [variableKey]: value };
+      // Picking another invoice number refreshes its amount and items.
+      const variable = active?.variables.find((item) => item.key === variableKey);
+      const invoice = variable?.fill === "invoice" ? invoices.find((item) => item.number === value.trim()) : null;
+      if (invoice && active) {
+        for (const other of active.variables) {
+          if (other.fill === "amount") next[other.key] = invoice.amount;
+          if (other.fill === "items") next[other.key] = invoice.items;
+        }
+      }
+      return next;
     });
   }
 
@@ -113,18 +147,28 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
           {active.variables.map((variable) => (
             <label className={styles.field} key={variable.key}>
               <span>{variable.label}</span>
-              <input
-                value={values[variable.key] ?? ""}
-                maxLength={variable.maxLength}
-                placeholder={variable.placeholder}
-                list={variable.key === "invoice" ? `invoices-${customerId}` : undefined}
-                onChange={(event) => setValues((current) => ({ ...current, [variable.key]: event.target.value }))}
-              />
+              {variable.options ? (
+                <select value={values[variable.key] ?? ""} onChange={(event) => update(variable.key, event.target.value)}>
+                  {variable.options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={values[variable.key] ?? ""}
+                  maxLength={variable.maxLength}
+                  placeholder={variable.placeholder}
+                  list={variable.fill === "invoice" ? `invoices-${customerId}` : undefined}
+                  onChange={(event) => update(variable.key, event.target.value)}
+                />
+              )}
             </label>
           ))}
           <datalist id={`invoices-${customerId}`}>
-            {invoiceNumbers.map((number) => (
-              <option key={number} value={number} />
+            {invoices.map((invoice) => (
+              <option key={invoice.number} value={invoice.number} />
             ))}
           </datalist>
 

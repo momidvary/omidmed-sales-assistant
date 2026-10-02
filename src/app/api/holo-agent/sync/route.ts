@@ -3,6 +3,8 @@ import crypto from "node:crypto";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
+import { sendAutoOrderSms } from "@/lib/sms/auto-order";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
@@ -223,7 +225,20 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message);
     }
 
-    return NextResponse.json(data ?? { ok: true });
+    // After the final batch of a run, message customers about invoices that
+    // are new since the last run. Optional: a failure here never fails the
+    // sync the agent is waiting on.
+    let autoOrderSms = null;
+    if (payload.batchType === "finish") {
+      try {
+        autoOrderSms = await sendAutoOrderSms(admin, ownerId);
+      } catch (smsError) {
+        console.error("Automatic order SMS failed:", smsError instanceof Error ? smsError.message : smsError);
+      }
+    }
+
+    const result = (data ?? { ok: true }) as Record<string, unknown>;
+    return NextResponse.json(autoOrderSms ? { ...result, autoOrderSms } : result);
   } catch (error) {
     console.error("Holoo sync receiver failed:", error);
 
