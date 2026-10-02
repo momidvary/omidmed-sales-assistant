@@ -3,6 +3,11 @@ import Link from "next/link";
 import AppShell, { Icon } from "@/components/app-shell";
 import { createClient } from "@/lib/supabase/server";
 import { escapeLike, normalizeSearchText } from "@/lib/search/normalize";
+import {
+  classifyFollowupNeed,
+  latestContactByCustomer,
+  type FollowupNeed,
+} from "@/lib/sales/followup-need";
 import styles from "./customers.module.css";
 
 const number = new Intl.NumberFormat("fa-IR");
@@ -35,13 +40,6 @@ function paginationPages(currentPage: number, totalPages: number) {
   return Array.from(pages).sort((left, right) => left - right);
 }
 
-const priorityLabel: Record<string, string> = {
-  low: "کم",
-  normal: "متوسط",
-  high: "زیاد",
-  vip: "ویژه",
-};
-
 const statusLabel: Record<string, string> = {
   active: "فعال",
   inactive: "غیرفعال",
@@ -60,56 +58,54 @@ const leadStageLabel: Record<string, string> = {
   lost: "از دست رفته",
 };
 
-const filterLabel: Record<string, string> = {
-  urgent: "اقدام فوری؛ موعد رسیده",
-  vip: "فقط مشتریان ویژه",
-  high: "فقط اولویت زیاد",
-  normal: "فقط اولویت متوسط",
-  low: "فقط اولویت کم",
-};
+const allowedTabs = new Set(["all", "needs", "ok", "archived"]);
 
-const allowedPriorityFilters = new Set([
-  "urgent",
-  "vip",
-  "high",
-  "normal",
-  "low",
-]);
-
-const allowedStatusFilters = new Set([
-  "all",
-  "active",
-  "prospect",
-  "inactive",
-  "lost",
-  "archived",
-]);
-
-type CustomersHrefOptions = {
-  page?: number;
-  search?: string;
-  priority?: string;
-  product?: string;
-  status?: string;
+type CustomerRow = {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  status: string;
+  lead_stage: string | null;
+  lead_source: string | null;
+  potential_value: number | string | null;
+  archived_at: string | null;
+  next_followup_at: string | null;
+  last_purchase_at: string | null;
+  purchase_count: number | null;
+  total_sales: number | string | null;
+  avg_purchase_gap_days: number | string | null;
+  days_since_last_purchase: number | null;
 };
 
 function customersHref({
   page = 1,
   search = "",
-  priority = "",
-  product = "",
-  status = "all",
-}: CustomersHrefOptions) {
+  tab = "all",
+}: {
+  page?: number;
+  search?: string;
+  tab?: string;
+}) {
   const query = new URLSearchParams();
-
   if (search) query.set("q", search);
-  if (product) query.set("product", product);
-  if (priority) query.set("priority", priority);
-  if (status !== "all") query.set("status", status);
+  if (tab !== "all") query.set("tab", tab);
   if (page > 1) query.set("page", String(page));
-
   const value = query.toString();
   return value ? `/customers?${value}` : "/customers";
+}
+
+async function fetchAll<T>(
+  load: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+) {
+  const rows: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await load(from, from + 999);
+    if (error) return { rows, error };
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < 1000) return { rows, error: null };
+  }
 }
 
 export default async function CustomersPage({
@@ -117,9 +113,7 @@ export default async function CustomersPage({
 }: {
   searchParams: Promise<{
     q?: string;
-    priority?: string;
-    product?: string;
-    status?: string;
+    tab?: string;
     page?: string;
     created?: string;
     archived?: string;
@@ -128,128 +122,72 @@ export default async function CustomersPage({
 }) {
   const params = await searchParams;
   const search = (params.q ?? "").trim().slice(0, 80);
-  const requestedPriority = (params.priority ?? "").trim();
-  const requestedStatus = (params.status ?? "all").trim();
-  const productSearch = (params.product ?? "").trim().slice(0, 100);
+  const tab = allowedTabs.has(params.tab ?? "") ? (params.tab as string) : "all";
   const currentPage = parsePage(params.page);
-  const from = (currentPage - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
-
-  const priorityFilter = allowedPriorityFilters.has(requestedPriority)
-    ? requestedPriority
-    : "";
-
-  const statusFilter = allowedStatusFilters.has(requestedStatus)
-    ? requestedStatus
-    : "all";
-
   const supabase = await createClient();
 
-  let matchingCustomerIds: string[] | null = null;
-  let productFilterError: string | null = null;
-
-  if (productSearch) {
-    const productMatches: Array<{ customer_id: string }> = [];
-    let productError: { message: string } | null = null;
-    for (let rangeFrom = 0; ; rangeFrom += 1000) {
-      const result = await supabase
-        .from("customer_product_summary")
-        .select("customer_id")
-        .ilike("product_name", `%${escapeLike(productSearch)}%`)
-        .order("customer_id")
-        .order("product_name")
-        .range(rangeFrom, rangeFrom + 999);
-      if (result.error) {
-        productError = result.error;
-        break;
+  const [customerResult, followupResult] = await Promise.all([
+    fetchAll<CustomerRow>((from, to) => {
+      let query = supabase
+        .from("customer_crm_summary")
+        .select(
+          "id,name,phone,address,city,status,lead_stage,lead_source,potential_value,archived_at,next_followup_at,last_purchase_at,purchase_count,total_sales,avg_purchase_gap_days,days_since_last_purchase",
+        )
+        .order("id")
+        .range(from, to);
+      query = tab === "archived"
+        ? query.not("archived_at", "is", null)
+        : query.is("archived_at", null);
+      if (search) {
+        query = query.ilike(
+          "search_document",
+          `%${escapeLike(normalizeSearchText(search))}%`,
+        );
       }
-      productMatches.push(...((result.data ?? []) as Array<{ customer_id: string }>));
-      if ((result.data ?? []).length < 1000) break;
-    }
+      return query as unknown as PromiseLike<{ data: CustomerRow[] | null; error: unknown }>;
+    }),
+    fetchAll<{ customer_id: string; followup_at: string }>((from, to) =>
+      supabase
+        .from("followups")
+        .select("customer_id,followup_at")
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<{
+          data: Array<{ customer_id: string; followup_at: string }> | null;
+          error: unknown;
+        }>,
+    ),
+  ]);
 
-    if (productError) {
-      productFilterError = "CUSTOMER_PRODUCT_FILTER_FAILED";
-    } else {
-      matchingCustomerIds = Array.from(
-        new Set(
-          productMatches.map(
-            (item) => item.customer_id as string,
-          ),
-        ),
-      );
-    }
-  }
-
-  let query = supabase
-    .from("customer_crm_summary")
-    .select(
-      "id,name,phone,address,city,status,priority,lead_stage,lead_source,potential_value,archived_at,last_purchase_at,purchase_count,total_sales,days_since_last_purchase",
-      { count: "exact" },
-    )
-    .order("total_sales", { ascending: false })
-    .order("created_at", { ascending: false })
-    .order("id")
-    .range(from, to);
-
-  if (statusFilter === "archived") {
-    query = query.not("archived_at", "is", null);
-  } else {
-    query = query.is("archived_at", null);
-
-    if (statusFilter !== "all") {
-      query = query.eq("status", statusFilter);
-    }
-  }
-
-  if (search) {
-    query = query.ilike(
-      "search_document",
-      `%${escapeLike(normalizeSearchText(search))}%`,
+  const error = customerResult.error || followupResult.error;
+  const lastContact = latestContactByCustomer(followupResult.rows);
+  const classified = customerResult.rows
+    .map((customer) => ({
+      customer,
+      need: classifyFollowupNeed(customer, lastContact.get(customer.id) ?? null) as FollowupNeed,
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.customer.total_sales ?? 0) - Number(a.customer.total_sales ?? 0),
     );
-  }
+  const needsCount = classified.filter((item) => item.need.needsFollowup).length;
+  const filtered = classified.filter((item) =>
+    tab === "needs"
+      ? item.need.needsFollowup
+      : tab === "ok"
+        ? !item.need.needsFollowup
+        : true,
+  );
 
-  if (priorityFilter === "urgent") {
-    query = query.lte("next_followup_at", new Date().toISOString());
-  } else if (priorityFilter) {
-    query = query.eq("priority", priorityFilter);
-  }
-
-  if (matchingCustomerIds?.length) {
-    query = query.in("id", matchingCustomerIds);
-  }
-
-  const shouldSkipCustomerQuery =
-    Boolean(productSearch) &&
-    matchingCustomerIds?.length === 0 &&
-    !productFilterError;
-
-  const result = shouldSkipCustomerQuery
-    ? { data: [], count: 0, error: null }
-    : await query;
-
-  const { data, count, error } = result;
-  const customers = data ?? [];
-  const totalCount = count ?? customers.length;
+  const totalCount = filtered.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const from = (currentPage - 1) * PAGE_SIZE;
+  const customers = filtered.slice(from, from + PAGE_SIZE);
   const shownFrom = customers.length > 0 ? from + 1 : 0;
   const shownTo = customers.length > 0 ? from + customers.length : 0;
   const pages = paginationPages(currentPage, totalPages);
+  const hasActiveFilter = Boolean(search || tab !== "all");
 
-  const hasActiveFilter = Boolean(
-    search ||
-      priorityFilter ||
-      productSearch ||
-      statusFilter !== "all",
-  );
-
-  const pageHref = (page: number) =>
-    customersHref({
-      page,
-      search,
-      priority: priorityFilter,
-      product: productSearch,
-      status: statusFilter,
-    });
+  const pageHref = (page: number) => customersHref({ page, search, tab });
 
   return (
     <AppShell
@@ -279,28 +217,9 @@ export default async function CustomersPage({
             placeholder="نام مشتری یا شماره موبایل..."
           />
 
-          <input
-            name="product"
-            defaultValue={productSearch}
-            placeholder="نام کالا؛ مثلاً پد اسپانیایی..."
-          />
+          <input type="hidden" name="tab" value={tab} />
 
-          <input type="hidden" name="status" value={statusFilter} />
-
-          <select
-            name="priority"
-            defaultValue={priorityFilter}
-            aria-label="فیلتر اولویت مشتری"
-          >
-            <option value="">همه اولویت‌ها</option>
-            <option value="urgent">پیگیری فوری؛ ویژه و زیاد</option>
-            <option value="vip">فقط ویژه</option>
-            <option value="high">فقط اولویت زیاد</option>
-            <option value="normal">فقط اولویت متوسط</option>
-            <option value="low">فقط اولویت کم</option>
-          </select>
-
-          <button type="submit">اعمال فیلتر</button>
+          <button type="submit">جست‌وجو</button>
 
           {hasActiveFilter ? <Link href="/customers">پاک‌کردن</Link> : null}
         </form>
@@ -319,33 +238,20 @@ export default async function CustomersPage({
           >
             + مشتری بالقوه
           </Link>
-
-          <Link className={styles.importButton} href="/import">
-            <Icon name="upload" size={18} /> ورود اطلاعات
-          </Link>
         </div>
       </section>
 
-      <nav className={styles.statusTabs} aria-label="فیلتر وضعیت مشتری">
+      <nav className={styles.statusTabs} aria-label="گروه مشتری">
         {[
           ["all", "همه"],
-          ["active", "فعال"],
-          ["prospect", "بالقوه"],
-          ["inactive", "غیرفعال"],
-          ["lost", "از دست رفته"],
+          ["needs", `نیاز به پیگیری${tab === "archived" ? "" : ` (${number.format(needsCount)})`}`],
+          ["ok", "نیاز به پیگیری ندارد"],
           ["archived", "بایگانی"],
         ].map(([value, label]) => (
           <Link
             key={value}
-            className={`${styles.statusTab} ${
-              statusFilter === value ? styles.activeTab : ""
-            }`}
-            href={customersHref({
-              search,
-              priority: priorityFilter,
-              product: productSearch,
-              status: value,
-            })}
+            className={`${styles.statusTab} ${tab === value ? styles.activeTab : ""}`}
+            href={customersHref({ search, tab: value })}
           >
             {label}
           </Link>
@@ -359,22 +265,6 @@ export default async function CustomersPage({
         </div>
 
         <div className={styles.summaryDetails}>
-          {statusFilter !== "all" ? (
-            <span className={styles.activeFilter}>
-              وضعیت: {statusLabel[statusFilter]}
-            </span>
-          ) : null}
-
-          {priorityFilter ? (
-            <span className={styles.activeFilter}>
-              {filterLabel[priorityFilter]}
-            </span>
-          ) : null}
-
-          {productSearch ? (
-            <span className={styles.activeFilter}>کالا: {productSearch}</span>
-          ) : null}
-
           <p>
             نمایش {number.format(shownFrom)} تا {number.format(shownTo)} از {" "}
             {number.format(totalCount)} مشتری؛ صفحه {number.format(currentPage)} از {" "}
@@ -384,12 +274,6 @@ export default async function CustomersPage({
       </section>
 
       <section className={styles.tableCard}>
-        {productFilterError ? (
-          <div className={styles.error}>
-            فیلتر کالا انجام نشد. شناسه خطا: {productFilterError}
-          </div>
-        ) : null}
-
         {error ? (
           <div className={styles.error}>
             خواندن فهرست مشتریان انجام نشد. شناسه خطا: CUSTOMERS_READ_FAILED
@@ -429,13 +313,13 @@ export default async function CustomersPage({
                   <th>آخرین خرید</th>
                   <th>تعداد خرید</th>
                   <th>جمع فروش / ارزش بالقوه</th>
-                  <th>اولویت</th>
+                  <th>پیگیری</th>
                   <th>عملیات</th>
                 </tr>
               </thead>
 
               <tbody>
-                {customers.map((customer) => (
+                {customers.map(({ customer, need }) => (
                   <tr key={customer.id}>
                     <td>
                       <Link
@@ -498,12 +382,13 @@ export default async function CustomersPage({
 
                     <td>
                       <span
-                        className={`${styles.priority} ${
-                          styles[customer.priority]
+                        className={`${styles.statusBadge} ${
+                          need.needsFollowup ? styles.lost : styles.active
                         }`}
                       >
-                        {priorityLabel[customer.priority] ?? customer.priority}
+                        {need.needsFollowup ? "نیاز به پیگیری" : "نیاز ندارد"}
                       </span>
+                      <small>{need.reason}</small>
                     </td>
 
                     <td>
