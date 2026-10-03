@@ -100,7 +100,7 @@ OPENAI_IMAGE_VARIANT_COUNT=3
 
 | متغیر | دکمه |
 | --- | --- |
-| `MELIPAYAMAK_PATTERN_PAYMENT` | صدور فاکتور / تسویه |
+| `MELIPAYAMAK_PATTERN_PAYMENT` | تسویه حساب |
 | `MELIPAYAMAK_PATTERN_PRODUCTION` | شروع تولید |
 | `MELIPAYAMAK_PATTERN_SHIPPED` | ارسال کالا |
 | `MELIPAYAMAK_PATTERN_FOLLOWUP` | یادآوری سفارش مجدد |
@@ -116,3 +116,5 @@ OPENAI_IMAGE_VARIANT_COUNT=3
 - خاموش‌کردن: `MELIPAYAMAK_AUTO_ORDER_SMS=off` در Vercel و redeploy.
 
 اگر کنسول ملی پیامک ارسال خدماتی را با پیام «به تنظیمات کنسول مراجعه کنید» رد کرد، پیامک‌های الگویی می‌توانند از وب‌سرویس پنل (`rest.payamak-panel.com`، متد `BaseServiceNumber`) ارسال شوند. کافی است `MELIPAYAMAK_USERNAME` (نام کاربری پنل) و `MELIPAYAMAK_PANEL_API_KEY` (APIKey بخش «توسعه دهندگان ← تنظیمات وبسرویس») در Vercel تعریف شوند؛ در این صورت همین مسیر استفاده می‌شود.
+
+کد الگوهای تأییدشده در خود برنامه ثبت شده‌اند (ثبت سفارش ۴۲۸۰۴۵، تسویه حساب ۵۴۹۰۰۵، شروع تولید ۵۴۹۰۰۶، ارسال کالا ۵۴۹۰۰۷، یادآوری سفارش ۵۴۹۰۰۸) و تعریف متغیرهای `MELIPAYAMAK_PATTERN_*` فقط برای تغییر این کدها لازم است.
