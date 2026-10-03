@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   normalizeIranMobile,
+  patternSendingConfigured,
   sendPatternSms,
   SmsProviderError,
 } from "@/lib/sms/melipayamak";
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
   }
 
   const bodyId = patternBodyId(pattern);
-  if (!process.env.MELIPAYAMAK_API_TOKEN?.trim() || bodyId === null) {
+  if (!patternSendingConfigured() || bodyId === null) {
     return NextResponse.json(
       {
         error: `این الگو هنوز فعال نیست. کد الگو را در Vercel با نام ${pattern.envVar} و توکن را با نام MELIPAYAMAK_API_TOKEN تعریف کنید.`,
