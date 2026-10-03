@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { normalizeIranMobile, sendPatternSms, SmsProviderError } from "@/lib/sms/melipayamak";
+import {
+  normalizeIranMobile,
+  patternSendingConfigured,
+  sendPatternSms,
+  SmsProviderError,
+} from "@/lib/sms/melipayamak";
 import {
   fillPatternText,
   patternArgs,
@@ -32,7 +37,7 @@ export type AutoOrderSmsSummary = {
 
 export function autoOrderSmsEnabled(env: Record<string, string | undefined> = process.env) {
   if ((env.MELIPAYAMAK_AUTO_ORDER_SMS ?? "").trim().toLowerCase() === "off") return false;
-  return Boolean(env.MELIPAYAMAK_API_TOKEN?.trim()) && patternBodyId(orderPattern, env) !== null;
+  return patternSendingConfigured(env) && patternBodyId(orderPattern, env) !== null;
 }
 
 type PendingInvoice = {

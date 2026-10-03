@@ -309,11 +309,83 @@ export async function sendSimpleSms(input: {
  * Sends an approved service-line pattern (وبسرویس خدماتی اشتراکی). The
  * provider fills the approved text with `args` in order.
  */
+type PanelCredentials = { username: string; password: string };
+
+// The legacy panel web service authenticates with the panel username and the
+// panel APIKey (Developers > Web service settings) instead of the console key.
+// It does not depend on console settings, so it is preferred when configured.
+function panelCredentials(env: Record<string, string | undefined> = process.env): PanelCredentials | null {
+  const username = env.MELIPAYAMAK_USERNAME?.trim();
+  const password = env.MELIPAYAMAK_PANEL_API_KEY?.trim();
+  return username && password ? { username, password } : null;
+}
+
+export function patternSendingConfigured(env: Record<string, string | undefined> = process.env) {
+  return Boolean(panelCredentials(env) || env.MELIPAYAMAK_API_TOKEN?.trim());
+}
+
+async function sendPatternViaPanel(
+  credentials: PanelCredentials,
+  input: { bodyId: number; to: string; args: string[] },
+) {
+  const body = new URLSearchParams({
+    username: credentials.username,
+    password: credentials.password,
+    to: input.to,
+    bodyId: String(input.bodyId),
+    // Arguments travel as one ";"-separated string, so a ";" inside a value
+    // would shift every later variable.
+    text: input.args.map((arg) => arg.replace(/;/g, "،")).join(";"),
+  });
+
+  let response: Response;
+  try {
+    response = await fetch("https://rest.payamak-panel.com/api/SendSMS/BaseServiceNumber", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new SmsProviderError(
+      "نتیجه ارتباط با ملی پیامک مشخص نشد؛ برای جلوگیری از پیام تکراری ارسال خودکار تکرار نشد.",
+      true,
+    );
+  }
+
+  const raw = await response.text();
+  let json: ProviderJson = {};
+  try {
+    json = raw ? (JSON.parse(raw) as ProviderJson) : {};
+  } catch {
+    json = {};
+  }
+  if (!response.ok) {
+    throw new SmsProviderError(`خطای ارتباط با وب‌سرویس پنل ملی پیامک؛ کد HTTP ${response.status}`);
+  }
+
+  const value = json.Value == null ? null : String(json.Value).trim();
+  const statusText = String(json.StrRetStatus ?? "").trim();
+  const recId = isRealRecId(value) ? value : null;
+  const success = Number(json.RetStatus) === 1 && Boolean(recId);
+  return {
+    success,
+    recId,
+    status: success
+      ? statusText
+      : `ملی پیامک ارسال را نپذیرفت؛ کد خطا ${value ?? "نامشخص"}${statusText ? ` (${statusText})` : ""}`,
+  };
+}
+
 export async function sendPatternSms(input: {
   bodyId: number;
   to: string;
   args: string[];
 }) {
+  const credentials = panelCredentials();
+  if (credentials) return sendPatternViaPanel(credentials, input);
+
   const response = await postToProvider("shared", {
     bodyId: input.bodyId,
     to: input.to,

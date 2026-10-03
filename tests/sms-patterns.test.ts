@@ -78,3 +78,44 @@ test("pattern send posts bodyId, recipient and args to the shared endpoint", asy
     else process.env.MELIPAYAMAK_API_TOKEN = previousToken;
   }
 });
+
+test("with panel credentials, patterns go through the legacy BaseServiceNumber web service", async () => {
+  const saved = {
+    user: process.env.MELIPAYAMAK_USERNAME,
+    key: process.env.MELIPAYAMAK_PANEL_API_KEY,
+  };
+  const previousFetch = globalThis.fetch;
+  process.env.MELIPAYAMAK_USERNAME = "09120000000";
+  process.env.MELIPAYAMAK_PANEL_API_KEY = "panel-key";
+  let url = "";
+  let form = new URLSearchParams();
+  const replies = [
+    { Value: "4512345678", RetStatus: 1, StrRetStatus: "Ok" },
+    { Value: "-10", RetStatus: 0, StrRetStatus: "InvalidData" },
+  ];
+  globalThis.fetch = (async (input: string, init: RequestInit) => {
+    url = input;
+    form = new URLSearchParams(String(init.body));
+    return new Response(JSON.stringify(replies.shift()));
+  }) as unknown as typeof fetch;
+  try {
+    const ok = await sendPatternSms({ bodyId: 428045, to: "09121234567", args: ["آقا/خانم", "الف;ب", "1205"] });
+    assert.equal(url, "https://rest.payamak-panel.com/api/SendSMS/BaseServiceNumber");
+    assert.equal(form.get("username"), "09120000000");
+    assert.equal(form.get("password"), "panel-key");
+    assert.equal(form.get("bodyId"), "428045");
+    assert.equal(form.get("text"), "آقا/خانم;الف،ب;1205");
+    assert.equal(ok.success, true);
+    assert.equal(ok.recId, "4512345678");
+
+    const rejected = await sendPatternSms({ bodyId: 428045, to: "09121234567", args: ["x"] });
+    assert.equal(rejected.success, false);
+    assert.match(rejected.status, /-10/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (saved.user === undefined) delete process.env.MELIPAYAMAK_USERNAME;
+    else process.env.MELIPAYAMAK_USERNAME = saved.user;
+    if (saved.key === undefined) delete process.env.MELIPAYAMAK_PANEL_API_KEY;
+    else process.env.MELIPAYAMAK_PANEL_API_KEY = saved.key;
+  }
+});
