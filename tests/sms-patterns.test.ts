@@ -16,12 +16,14 @@ test("only patterns with a numeric bodyId are offered", () => {
   const keys = configuredPatterns({ MELIPAYAMAK_PATTERN_PAYMENT: "428065", MELIPAYAMAK_PATTERN_SHIPPED: "abc" }).map(
     (pattern) => pattern.key,
   );
-  // "order" is the pattern already approved in the panel and works by default.
-  assert.deepEqual(keys, ["order", "payment"]);
+  // Every pattern is approved in the panel and has a built-in code; an
+  // invalid override disables just that one.
+  assert.deepEqual(keys, ["order", "payment", "production", "followup"]);
   assert.deepEqual(
     configuredPatterns({ MELIPAYAMAK_PATTERN_ORDER: "invalid" }).map((pattern) => pattern.key),
-    [],
+    ["payment", "production", "shipped", "followup"],
   );
+  assert.equal(configuredPatterns({}).length, SMS_PATTERNS.length);
 });
 
 test("order items are summarised to fit one pattern variable", () => {

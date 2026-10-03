@@ -59,9 +59,10 @@ export const SMS_PATTERNS: PatternDefinition[] = [
   },
   {
     key: "payment",
-    button: "صدور فاکتور / تسویه",
-    description: "فاکتور صادر شده؛ بعد از تسویه سفارش به تولید می‌رود.",
+    button: "تسویه حساب",
+    description: "فاکتور صادر شده؛ مشتری باید تسویه کند تا سفارش به تولید برود.",
     envVar: "MELIPAYAMAK_PATTERN_PAYMENT",
+    defaultBodyId: 549005,
     source: "accounting",
     text:
       "{0} گرامی، فاکتور شماره {1} برای سفارش شما صادر شد و پس از تسویه به مرحله تولید ارسال می‌شود.\nomidmed.com",
@@ -75,6 +76,7 @@ export const SMS_PATTERNS: PatternDefinition[] = [
     button: "شروع تولید",
     description: "تسویه انجام شد و سفارش وارد تولید شد.",
     envVar: "MELIPAYAMAK_PATTERN_PRODUCTION",
+    defaultBodyId: 549006,
     source: "customer",
     text:
       "{0} گرامی، سفارش شما با فاکتور شماره {1} وارد مرحله تولید شد.\nomidmed.com",
@@ -88,6 +90,7 @@ export const SMS_PATTERNS: PatternDefinition[] = [
     button: "ارسال کالا",
     description: "سفارش ارسال شد؛ همراه با روش ارسال یا کد رهگیری.",
     envVar: "MELIPAYAMAK_PATTERN_SHIPPED",
+    defaultBodyId: 549007,
     source: "customer",
     text:
       "{0} گرامی، سفارش شما با فاکتور شماره {1} از طریق {2} ارسال شد.\nomidmed.com",
@@ -102,6 +105,7 @@ export const SMS_PATTERNS: PatternDefinition[] = [
     button: "یادآوری سفارش مجدد",
     description: "یادآوری به مشتری که موعد سفارش بعدی‌اش رسیده.",
     envVar: "MELIPAYAMAK_PATTERN_FOLLOWUP",
+    defaultBodyId: 549008,
     source: "customer",
     text:
       "{0} گرامی، موعد سفارش مجدد لوازم مصرفی شما فرا رسیده است. برای ثبت سفارش با شماره {1} تماس بگیرید.\nomidmed.com",
