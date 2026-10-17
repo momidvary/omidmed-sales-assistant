@@ -12,6 +12,8 @@ export type InvoiceRow = {
   card_amount: number | string | null;
   check_amount: number | string | null;
   settled_at: string | null;
+  /** Paid so far by confirmed deposits (toman). */
+  paid_amount?: number;
 };
 
 export type InvoiceCustomer = {
@@ -32,6 +34,32 @@ export async function customersByIds(supabase: Supabase, ids: string[]) {
     for (const row of (data ?? []) as InvoiceCustomer[]) map.set(row.id, row);
   }
   return map;
+}
+
+/** Toman already paid towards each invoice by confirmed deposits. */
+export async function paidByInvoice(supabase: Supabase, invoiceIds: string[]) {
+  const paid = new Map<string, number>();
+  for (let index = 0; index < invoiceIds.length; index += 200) {
+    const { data, error } = await supabase
+      .from("bank_payment_allocations")
+      .select("invoice_id,amount_toman")
+      .in("invoice_id", invoiceIds.slice(index, index + 200));
+    // Before migration 027 there are no part payments to show.
+    if (error) return paid;
+    for (const row of data ?? []) {
+      const id = row.invoice_id as string;
+      paid.set(id, (paid.get(id) ?? 0) + Number(row.amount_toman));
+    }
+  }
+  return paid;
+}
+
+async function withPaid(supabase: Supabase, rows: InvoiceRow[]) {
+  const paid = await paidByInvoice(
+    supabase,
+    rows.map((row) => row.id),
+  );
+  return rows.map((row) => ({ ...row, paid_amount: paid.get(row.id) ?? 0 }));
 }
 
 /**
@@ -71,13 +99,16 @@ export async function loadUnsettledInvoices(supabase: Supabase) {
       .lt("invoice_date", since),
   ]);
 
-  const customers = await customersByIds(supabase, [...new Set(invoices.rows.map((row) => row.customer_id))]);
+  const [customers, rows] = await Promise.all([
+    customersByIds(supabase, [...new Set(invoices.rows.map((row) => row.customer_id))]),
+    withPaid(supabase, invoices.rows),
+  ]);
   const excluded: Record<Exclude<SettlementState, "open" | "settled">, number> = {
     paid_in_holoo: 0,
     customer_clear: 0,
   };
   const open: Array<InvoiceRow & { customer: InvoiceCustomer | null }> = [];
-  for (const invoice of invoices.rows) {
+  for (const invoice of rows) {
     const customer = customers.get(invoice.customer_id) ?? null;
     const state = settlementState({
       invoice,
@@ -100,6 +131,7 @@ export function asOpenInvoices(rows: InvoiceRow[]): OpenInvoice[] {
     invoice_number: row.invoice_number,
     invoice_date: row.invoice_date,
     total_amount: Number(row.total_amount),
+    paid_amount: row.paid_amount ?? 0,
   }));
 }
 
@@ -121,5 +153,5 @@ export async function loadMatchableInvoices(supabase: Supabase, since: string) {
       .order("id")
       .range(from, to),
   );
-  return asOpenInvoices(result.rows);
+  return asOpenInvoices(await withPaid(supabase, result.rows));
 }

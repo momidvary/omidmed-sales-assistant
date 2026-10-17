@@ -2,8 +2,13 @@ import Link from "next/link";
 
 import AppShell from "@/components/app-shell";
 import { bankCategory, categoriesFor } from "@/lib/bank/categories";
-import { suggestDepositMatches, type CounterpartyRule, type MatchCustomer } from "@/lib/bank/matching";
-import { escapeLike } from "@/lib/search/normalize";
+import {
+  invoiceDue,
+  suggestDepositMatches,
+  type CounterpartyRule,
+  type MatchCustomer,
+} from "@/lib/bank/matching";
+import { escapeLike, normalizeSearchText } from "@/lib/search/normalize";
 import { createClient } from "@/lib/supabase/server";
 
 import { categorizeTransaction, confirmDeposit, ignoreTransaction, reopenTransaction } from "../actions";
@@ -88,33 +93,47 @@ export default async function DepositsPage({
   const search = (params.q ?? "").trim().slice(0, 60);
   let searchResults: MatchCustomer[] = [];
   if (view === "pending" && focus && search.length >= 2) {
+    // Same normalised search as the customers page: Holoo names often use
+    // Arabic ي/ك, which a plain match on «ی/ک» would miss.
     const { data: found } = await supabase
-      .from("customers")
-      .select("id,name,contact_name")
-      .ilike("name", `%${escapeLike(search)}%`)
+      .from("customer_crm_summary")
+      .select("id,name")
+      .ilike("search_document", `%${escapeLike(normalizeSearchText(search))}%`)
       .order("name")
       .limit(8);
     searchResults = (found ?? []) as MatchCustomer[];
   }
 
-  // Names and settled invoices for the reviewed lists.
+  // Names and paid invoices for the reviewed lists.
   const reviewedCustomerNames = new Map<string, string>();
-  const settledByTransaction = new Map<string, string[]>();
+  const paidByTransaction = new Map<string, string[]>();
   if (view !== "pending" && deposits.length) {
     const customerIds = [...new Set(deposits.map((tx) => tx.customer_id).filter(Boolean))] as string[];
-    const [{ data: names }, { data: settled }] = await Promise.all([
+    const [{ data: names }, { data: allocations }] = await Promise.all([
       customerIds.length
         ? supabase.from("customers").select("id,name").in("id", customerIds)
         : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
       supabase
-        .from("invoices")
-        .select("invoice_number,settled_transaction_id")
-        .in("settled_transaction_id", deposits.map((tx) => tx.id)),
+        .from("bank_payment_allocations")
+        .select("transaction_id,invoice_id,amount_toman")
+        .in("transaction_id", deposits.map((tx) => tx.id)),
     ]);
     for (const row of names ?? []) reviewedCustomerNames.set(row.id, row.name);
-    for (const row of settled ?? []) {
-      const key = row.settled_transaction_id as string;
-      settledByTransaction.set(key, [...(settledByTransaction.get(key) ?? []), row.invoice_number as string]);
+    const invoiceIds = [...new Set((allocations ?? []).map((row) => row.invoice_id as string))];
+    const { data: invoiceRows } = invoiceIds.length
+      ? await supabase.from("invoices").select("id,invoice_number,total_amount,settled_at").in("id", invoiceIds)
+      : { data: [] };
+    const invoices = new Map((invoiceRows ?? []).map((row) => [row.id as string, row]));
+    for (const row of allocations ?? []) {
+      const invoice = invoices.get(row.invoice_id as string);
+      if (!invoice) continue;
+      const amount = Number(row.amount_toman);
+      const label =
+        amount >= Number(invoice.total_amount)
+          ? `فاکتور ${invoice.invoice_number}`
+          : `${formatNumber(amount)} از فاکتور ${invoice.invoice_number}${invoice.settled_at ? "" : " (هنوز مانده دارد)"}`;
+      const key = row.transaction_id as string;
+      paidByTransaction.set(key, [...(paidByTransaction.get(key) ?? []), label]);
     }
   }
 
@@ -137,8 +156,9 @@ export default async function DepositsPage({
 
       {view === "pending" ? (
         <p className={styles.hint}>
-          برنامه از روی کارت، نام واریزکننده و مبلغ دقیق فاکتورها پیشنهاد می‌دهد، ولی تا شما تأیید نکنید هیچ فاکتوری
-          تسویه‌شده حساب نمی‌شود. فاکتورهایی که اینجا تیک بخورند دیگر پیامک «تسویه حساب» نمی‌گیرند.
+          برنامه از روی کارت، نام واریزکننده و مبلغ فاکتورها پیشنهاد می‌دهد، ولی تا شما تأیید نکنید هیچ فاکتوری
+          تسویه‌شده حساب نمی‌شود. اگر واریز کمتر از فاکتور باشد (پرداخت قسطی) همان فاکتور را تیک بزنید؛ مبلغ از
+          مانده فاکتور کم می‌شود و فاکتور وقتی تسویه می‌شود که کل مبلغش واریز شده باشد.
         </p>
       ) : null}
 
@@ -166,7 +186,7 @@ export default async function DepositsPage({
           );
 
           if (view !== "pending") {
-            const invoices = settledByTransaction.get(tx.id) ?? [];
+            const invoices = paidByTransaction.get(tx.id) ?? [];
             return (
               <article key={tx.id} className={styles.card}>
                 {head}
@@ -174,7 +194,7 @@ export default async function DepositsPage({
                   {tx.customer_id
                     ? `مشتری: ${reviewedCustomerNames.get(tx.customer_id) ?? "—"}`
                     : bankCategory(tx.category)?.label ?? (view === "ignored" ? "کنار گذاشته شده" : "—")}
-                  {invoices.length ? ` · فاکتورهای تسویه‌شده: ${invoices.join("، ")}` : ""}
+                  {invoices.length ? ` · پرداخت: ${invoices.join("، ")}` : ""}
                   {tx.user_note ? ` · ${tx.user_note}` : ""}
                 </p>
                 <form action={reopenTransaction} className={styles.inlineForm}>
@@ -243,6 +263,7 @@ export default async function DepositsPage({
                                     defaultChecked={invoiceIds.includes(invoice.id)}
                                   />
                                   فاکتور {invoice.invoice_number} · {formatNumber(invoice.total_amount)} تومان
+                                  {invoice.paid_amount ? ` (مانده ${formatNumber(invoiceDue(invoice))})` : ""}
                                 </label>
                               ))}
                             </div>

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { isValidCategory } from "@/lib/bank/categories";
-import { findRule, ruleKeys, rialToToman, type CounterpartyRule } from "@/lib/bank/matching";
+import { findRule, ruleKeys, type CounterpartyRule } from "@/lib/bank/matching";
 import { createClient } from "@/lib/supabase/server";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -65,17 +65,19 @@ async function rememberRule(
   return error ? null : (rule as CounterpartyRule);
 }
 
+const rpcErrors = new Set(["invalid", "reviewed", "customer", "invoice", "amount"]);
+
+function rpcError(error: { message?: string } | null) {
+  const code = error?.message?.trim() ?? "";
+  return rpcErrors.has(code) ? code : "save";
+}
+
 export async function confirmDeposit(formData: FormData) {
   const back = returnPath(formData);
   const supabase = await createClient();
   const tx = await loadTransaction(supabase, clean(formData.get("tx_id"), 40));
   const customerId = clean(formData.get("customer_id"), 40);
   if (!tx || tx.kind !== "deposit" || !uuidPattern.test(customerId)) finish(back, "error=invalid");
-  // A reviewed deposit is reopened first, which releases its invoices.
-  if (tx.review_status !== "pending") finish(back, "error=reviewed");
-
-  const { data: customer } = await supabase.from("customers").select("id").eq("id", customerId).maybeSingle();
-  if (!customer) finish(back, "error=customer");
 
   // Checkbox values are "customerId:invoiceId"; only the chosen customer's count.
   const invoiceIds = formData
@@ -84,55 +86,21 @@ export async function confirmDeposit(formData: FormData) {
     .filter(([owner, id]) => owner === customerId && uuidPattern.test(id ?? ""))
     .map(([, id]) => id);
 
-  if (invoiceIds.length) {
-    const { data: invoices } = await supabase
-      .from("invoices")
-      .select("id,total_amount")
-      .eq("customer_id", customerId)
-      .is("settled_at", null)
-      .in("id", invoiceIds);
-    const total = (invoices ?? []).reduce((sum, invoice) => sum + Number(invoice.total_amount ?? 0), 0);
-    if ((invoices ?? []).length !== invoiceIds.length) finish(back, "error=invoice");
-    if (total > rialToToman(Number(tx.amount_rial))) finish(back, "error=amount");
-  }
-
-  const { data: claimed, error } = await supabase
-    .from("bank_transactions")
-    .update({
-      customer_id: customerId,
-      category: "customer_payment",
-      category_source: "manual",
-      review_status: "confirmed",
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", tx.id)
-    // A second click of the same form must not settle invoices twice.
-    .eq("review_status", "pending")
-    .select("id");
-  if (error) finish(back, "error=save");
-  if (!claimed?.length) finish(back, "error=reviewed");
-
-  if (invoiceIds.length) {
-    const { error: settleError } = await supabase
-      .from("invoices")
-      .update({
-        settled_at: new Date().toISOString(),
-        settled_source: "bank",
-        settled_transaction_id: tx.id,
-        settled_note: null,
-      })
-      .eq("customer_id", customerId)
-      .is("settled_at", null)
-      .in("id", invoiceIds);
-    if (settleError) finish(back, "error=save");
-  }
+  // One database call: the deposit, its part payments and the invoices'
+  // settled state change together or not at all.
+  const { error } = await supabase.rpc("confirm_bank_deposit", {
+    p_transaction_id: tx.id,
+    p_customer_id: customerId,
+    p_invoice_ids: invoiceIds,
+  });
+  if (error) finish(back, `error=${rpcError(error)}`);
 
   if (formData.get("remember") === "on") {
     await rememberRule(supabase, tx, { category: "customer_payment", customer_id: customerId });
   }
 
   revalidatePath(`/customers/${customerId}`);
-  finish(back, `saved=deposit`);
+  finish(back, "saved=deposit");
 }
 
 export async function categorizeTransaction(formData: FormData) {
@@ -205,30 +173,14 @@ export async function ignoreTransaction(formData: FormData) {
   finish(back, error ? "error=save" : "saved=ignored");
 }
 
-/** Back to "waiting for review"; invoices this deposit settled reopen. */
+/** Back to "waiting for review"; invoices this deposit paid reopen. */
 export async function reopenTransaction(formData: FormData) {
   const back = returnPath(formData);
   const supabase = await createClient();
   const tx = await loadTransaction(supabase, clean(formData.get("tx_id"), 40));
   if (!tx) finish(back, "error=invalid");
-
-  const { error: invoiceError } = await supabase
-    .from("invoices")
-    .update({ settled_at: null, settled_source: null, settled_transaction_id: null, settled_note: null })
-    .eq("settled_transaction_id", tx.id);
-  if (invoiceError) finish(back, "error=save");
-
-  const { error } = await supabase
-    .from("bank_transactions")
-    .update({
-      category: null,
-      category_source: null,
-      customer_id: null,
-      review_status: "pending",
-      reviewed_at: null,
-    })
-    .eq("id", tx.id);
-  finish(back, error ? "error=save" : "saved=reopened");
+  const { error } = await supabase.rpc("reopen_bank_transaction", { p_transaction_id: tx.id });
+  finish(back, error ? `error=${rpcError(error)}` : "saved=reopened");
 }
 
 export async function settleInvoiceManually(formData: FormData) {

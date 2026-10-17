@@ -107,6 +107,21 @@ test("upgrade from 023 repairs derived data without clobbering manual data", { s
   );
 });
 
+test("a deposit can pay part of an invoice and undoing it reopens the invoice", { skip: !hasDb }, () => {
+  execFileSync("supabase/tests/harness/run.sh", ["fresh"], { stdio: "ignore" });
+  const out = execFileSync(
+    "psql",
+    ["-tA", "-v", "ON_ERROR_STOP=1", "-d", "migtest_fresh", "-f", "supabase/tests/harness/bank_allocations.sql"],
+    { encoding: "utf8" },
+  );
+  const rows = out.split("\n").map((line) => line.trim()).filter((line) => line.includes("|"));
+  assert.deepEqual(rows, [
+    "first|15000000|false",
+    "second|22000000|true",
+    "undo|7000000|false",
+  ]);
+});
+
 // --------------------------------------------------------------------------
 // Search normalisation parity.
 //
