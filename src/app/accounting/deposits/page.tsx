@@ -4,6 +4,7 @@ import AppShell from "@/components/app-shell";
 import { bankCategory, categoriesFor } from "@/lib/bank/categories";
 import {
   invoiceDue,
+  nearestFirst,
   suggestDepositMatches,
   type CounterpartyRule,
   type MatchCustomer,
@@ -16,6 +17,7 @@ import styles from "../accounting.module.css";
 import { loadMatchableInvoices } from "../invoice-data";
 import {
   AccountingTabs,
+  formatDate,
   formatNumber,
   maskCard,
   MissingMigration,
@@ -45,8 +47,9 @@ export default async function DepositsPage({
     .select(TRANSACTION_COLUMNS)
     .eq("kind", "deposit")
     .eq("review_status", view)
-    .order("tx_date", { ascending: view === "pending" })
-    .order("tx_time", { ascending: view === "pending" })
+    // Newest first: today's deposits are the ones waiting on today's invoices.
+    .order("tx_date", { ascending: false })
+    .order("tx_time", { ascending: false })
     .limit(view === "pending" ? 30 : 60);
 
   if (error) {
@@ -57,9 +60,10 @@ export default async function DepositsPage({
     );
   }
   const deposits = (data ?? []) as TransactionRow[];
-  // Pending deposits are oldest first; look back 120 days from the oldest.
-  const matchSince = deposits[0]
-    ? new Date(Date.parse(deposits[0].tx_date) - 120 * 86_400_000).toISOString().slice(0, 10)
+  // Look back 120 days from the oldest deposit on this page.
+  const oldest = deposits.at(-1);
+  const matchSince = oldest
+    ? new Date(Date.parse(oldest.tx_date) - 120 * 86_400_000).toISOString().slice(0, 10)
     : null;
 
   const [counts, customersResult, rulesResult, openInvoices] = await Promise.all([
@@ -244,7 +248,7 @@ export default async function DepositsPage({
                   <fieldset>
                     <legend>این واریز مال کدام مشتری است؟</legend>
                     {options.map(({ customer, invoiceIds, reasons }) => {
-                      const customerInvoices = (invoicesByCustomer.get(customer!.id) ?? []).slice(0, 8);
+                      const customerInvoices = nearestFirst(invoicesByCustomer.get(customer!.id) ?? [], tx.tx_date).slice(0, 8);
                       return (
                         <div key={customer!.id} className={styles.option}>
                           <label className={styles.optionHead}>
@@ -262,7 +266,8 @@ export default async function DepositsPage({
                                     value={`${customer!.id}:${invoice.id}`}
                                     defaultChecked={invoiceIds.includes(invoice.id)}
                                   />
-                                  فاکتور {invoice.invoice_number} · {formatNumber(invoice.total_amount)} تومان
+                                  فاکتور {invoice.invoice_number} · {formatDate(invoice.invoice_date)} ·{" "}
+                                  {formatNumber(invoice.total_amount)} تومان
                                   {invoice.paid_amount ? ` (مانده ${formatNumber(invoiceDue(invoice))})` : ""}
                                 </label>
                               ))}
