@@ -29,8 +29,6 @@ const FEATURES = [
   "assistant",
   "content",
   "sms_suggest",
-  "expense_classify",
-  "invoice_extract",
 ] as const;
 
 test("valid configuration resolves key and model for every text feature", () => {
@@ -46,10 +44,10 @@ test("per-feature override wins over the shared model", () => {
   const env = {
     OPENAI_API_KEY: "k",
     OPENAI_MODEL: "base-model",
-    OPENAI_INVOICE_MODEL: "vision-model",
+    OPENAI_SMS_MODEL: "sms-model",
     OPENAI_CONTENT_MODEL: "content-model",
   };
-  assert.equal(resolveModel("invoice_extract", env), "vision-model");
+  assert.equal(resolveModel("sms_suggest", env), "sms-model");
   assert.equal(resolveModel("content", env), "content-model");
   assert.equal(resolveModel("assistant", env), "base-model");
 });

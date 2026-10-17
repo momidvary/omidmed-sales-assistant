@@ -35,40 +35,6 @@ export function normalizeHoloBalance(input: {
   } as const;
 }
 
-export function payrollTotals(input: {
-  baseSalary: NumericValue;
-  overtime?: NumericValue;
-  bonus?: NumericValue;
-  allowance?: NumericValue;
-  deductions?: NumericValue;
-  advance?: NumericValue;
-  paid?: NumericValue;
-  employerCosts?: NumericValue;
-}) {
-  const gross = Math.max(
-    0,
-    numeric(input.baseSalary) +
-      numeric(input.overtime) +
-      numeric(input.bonus) +
-      numeric(input.allowance),
-  );
-  const deductions = Math.max(0, numeric(input.deductions));
-  const net = Math.max(0, gross - deductions);
-  const paid = Math.min(
-    net,
-    Math.max(0, numeric(input.advance) + numeric(input.paid)),
-  );
-  return {
-    gross,
-    deductions,
-    net,
-    paid,
-    remaining: Math.max(0, net - paid),
-    laborCost: gross + Math.max(0, numeric(input.employerCosts)),
-    status: paid <= 0 ? "unpaid" : paid >= net ? "paid" : "partial",
-  } as const;
-}
-
 export type DueBucket = "today" | "overdue" | "future" | "unscheduled";
 
 export function tehranDateKey(date: Date) {

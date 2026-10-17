@@ -52,7 +52,7 @@ const menu = [
   { label: "ساخت پوستر", icon: "calendar" as const, href: "/content-studio", key: "content-studio" },
   { label: "پیامک", icon: "sms" as const, href: "/sms", key: "sms" },
   { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
-  { label: "حسابداری مدیریتی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
+  { label: "حسابداری بانکی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
   { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
   { label: "گزارش‌ها", icon: "report" as const, href: "/reports", key: "reports" },
 ];
