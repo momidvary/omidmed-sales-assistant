@@ -136,6 +136,33 @@ function searchSubset(
 
 const DAY_MS = 86_400_000;
 
+/** Days between an invoice and a deposit, in either direction. */
+export function daysApart(invoiceDate: string, depositDate: string) {
+  return Math.abs(Date.parse(invoiceDate) - Date.parse(depositDate)) / DAY_MS;
+}
+
+/**
+ * Invoices nearest the deposit date first; on a tie the newer one. Customers
+ * normally pay on the day of the invoice, while Holoo still lists many old
+ * invoices as unpaid that were in fact paid long ago.
+ */
+export function nearestFirst<T extends { invoice_date: string }>(invoices: T[], depositDate: string) {
+  return invoices
+    .slice()
+    .sort(
+      (a, b) =>
+        daysApart(a.invoice_date, depositDate) - daysApart(b.invoice_date, depositDate) ||
+        b.invoice_date.localeCompare(a.invoice_date),
+    );
+}
+
+function proximityBonus(days: number) {
+  if (days <= 1) return 30;
+  if (days <= 3) return 20;
+  if (days <= 10) return 10;
+  return 0;
+}
+
 export function suggestDepositMatches(input: {
   deposit: {
     amount_rial: number;
@@ -146,18 +173,21 @@ export function suggestDepositMatches(input: {
   customers: MatchCustomer[];
   rules: CounterpartyRule[];
   openInvoices: OpenInvoice[];
-  /** Invoices older than this many days before the deposit are not suggested. */
+  /** How far back to look for a customer recognised by card or name. */
   windowDays?: number;
+  /** How far back an amount alone may point at someone's invoice. */
+  amountOnlyDays?: number;
 }): DepositSuggestion[] {
   const { deposit, customers, rules } = input;
   const amount = rialToToman(deposit.amount_rial);
   const depositTime = Date.parse(deposit.tx_date);
   const windowDays = input.windowDays ?? 120;
-  const invoices = input.openInvoices.filter((invoice) => {
+  const amountOnlyDays = input.amountOnlyDays ?? 14;
+  const within = (invoice: OpenInvoice, daysBack: number) => {
     const time = Date.parse(invoice.invoice_date);
     // An invoice can be issued a few days after the money arrives.
-    return time <= depositTime + 7 * DAY_MS && time >= depositTime - windowDays * DAY_MS;
-  });
+    return time <= depositTime + 7 * DAY_MS && time >= depositTime - daysBack * DAY_MS;
+  };
 
   const scores = new Map<string, { score: number; reasons: string[] }>();
   const add = (customerId: string, score: number, reason: string) => {
@@ -185,9 +215,12 @@ export function suggestDepositMatches(input: {
       if (similarity >= 0.5) add(customer.id, Math.round(40 * similarity), "نام واریزکننده شبیه نام مشتری است");
     }
   }
+  // Customers known from the card or name; everyone else needs a recent invoice.
+  const recognised = new Set(scores.keys());
 
   const byCustomer = new Map<string, OpenInvoice[]>();
-  for (const invoice of invoices) {
+  for (const invoice of input.openInvoices) {
+    if (!within(invoice, recognised.has(invoice.customer_id) ? windowDays : amountOnlyDays)) continue;
     byCustomer.set(invoice.customer_id, [...(byCustomer.get(invoice.customer_id) ?? []), invoice]);
   }
 
@@ -195,12 +228,13 @@ export function suggestDepositMatches(input: {
   if (Number.isInteger(amount) && amount > 0) {
     for (const [customerId, customerInvoices] of byCustomer) {
       // Exact amounts only: a near match is too easy to confirm by mistake.
-      const subset = invoicesSummingTo(customerInvoices, amount);
+      const subset = invoicesSummingTo(nearestFirst(customerInvoices, deposit.tx_date), amount);
       if (!subset) continue;
       invoiceIds.set(customerId, subset.map((invoice) => invoice.id));
+      const farthest = Math.max(...subset.map((invoice) => daysApart(invoice.invoice_date, deposit.tx_date)));
       add(
         customerId,
-        subset.length === 1 ? 50 : 40,
+        (subset.length === 1 ? 50 : 40) + proximityBonus(farthest),
         subset.length === 1
           ? subset[0].paid_amount
             ? `مبلغ دقیقاً برابر مانده فاکتور ${subset[0].invoice_number} است`
@@ -210,12 +244,13 @@ export function suggestDepositMatches(input: {
     }
 
     // Part payment: for a customer already recognised by card or name, the
-    // oldest invoice the deposit does not fully cover (e.g. 15m of a 22m).
-    for (const customerId of scores.keys()) {
+    // invoice nearest the deposit date that it does not fully cover.
+    for (const customerId of recognised) {
       if (invoiceIds.has(customerId)) continue;
-      const partial = (byCustomer.get(customerId) ?? [])
-        .filter((invoice) => invoiceDue(invoice) > amount)
-        .sort((a, b) => a.invoice_date.localeCompare(b.invoice_date))[0];
+      const partial = nearestFirst(
+        (byCustomer.get(customerId) ?? []).filter((invoice) => invoiceDue(invoice) > amount),
+        deposit.tx_date,
+      )[0];
       if (!partial) continue;
       invoiceIds.set(customerId, [partial.id]);
       add(customerId, 10, `بخشی از فاکتور ${partial.invoice_number} (پرداخت قسطی)`);

@@ -73,7 +73,7 @@ test("deposit suggestions combine learned card, name and exact amount (rial to t
   assert.equal(suggestions[0].customerId, "c1", "name + exact invoice amount wins");
   assert.deepEqual(suggestions[0].invoiceIds, ["i1"]);
   assert.equal(suggestions[1].customerId, "c2");
-  assert.deepEqual(suggestions[1].invoiceIds, ["i2", "i3"]);
+  assert.deepEqual(suggestions[1].invoiceIds.slice().sort(), ["i2", "i3"]);
   assert.ok(!suggestions.some((s) => s.customerId === "c3"), "invoices far before the deposit are not suggested");
 
   const learned = suggestDepositMatches({
@@ -83,7 +83,7 @@ test("deposit suggestions combine learned card, name and exact amount (rial to t
     openInvoices: invoices,
   });
   assert.equal(learned[0].customerId, "c2");
-  assert.deepEqual(learned[0].invoiceIds, ["i2"], "a smaller amount is proposed as part of the oldest invoice");
+  assert.deepEqual(learned[0].invoiceIds, ["i3"], "a smaller amount is proposed as part of the nearest invoice");
 });
 
 test("any evidence of payment blocks the payment reminder", () => {
@@ -144,4 +144,42 @@ test("part payments: the first instalment points at the invoice, the last one ma
   assert.equal(second[0].customerId, "c1");
   assert.deepEqual(second[0].invoiceIds, ["big"]);
   assert.match(second[0].reasons[0], /مانده فاکتور 500/);
+});
+
+test("today's invoice beats a month-old one Holoo still lists as unpaid", () => {
+  const old: OpenInvoice = {
+    id: "old",
+    customer_id: "c1",
+    invoice_number: "400",
+    invoice_date: "2026-09-16",
+    total_amount: 9_000_000,
+  };
+  const today: OpenInvoice = { ...old, id: "today", invoice_number: "512", invoice_date: "2026-10-16" };
+
+  // Part payment from a recognised payer: the invoice of the same day.
+  const partial = suggestDepositMatches({
+    deposit: { amount_rial: 50_000_000, tx_date: "2026-10-16", counterparty_card: null, counterparty_name: "نسرین صالحی" },
+    customers,
+    rules: [],
+    openInvoices: [old, today],
+  });
+  assert.deepEqual(partial[0].invoiceIds, ["today"]);
+
+  // Exact amount with two equal invoices: the same-day one.
+  const exact = suggestDepositMatches({
+    deposit: { amount_rial: 90_000_000, tx_date: "2026-10-16", counterparty_card: null, counterparty_name: "نسرین صالحی" },
+    customers,
+    rules: [],
+    openInvoices: [old, today],
+  });
+  assert.deepEqual(exact[0].invoiceIds, ["today"]);
+
+  // An unknown payer is never pointed at someone's month-old invoice by amount alone.
+  const stranger = suggestDepositMatches({
+    deposit: { amount_rial: 90_000_000, tx_date: "2026-10-16", counterparty_card: null, counterparty_name: null },
+    customers,
+    rules: [],
+    openInvoices: [{ ...old, customer_id: "c3" }],
+  });
+  assert.equal(stranger.length, 0);
 });
