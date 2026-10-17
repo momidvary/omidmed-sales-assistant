@@ -147,3 +147,15 @@ test("a success status without per-recipient ids counts as an accepted send", as
     else process.env.MELIPAYAMAK_API_TOKEN = previousToken;
   }
 });
+
+test("the payment reminder is refused server-side for invoices with any sign of payment", () => {
+  const route = readFileSync("src/app/api/sms/pattern/route.ts", "utf8");
+  const guard = route.indexOf('pattern.key === "payment"');
+  const insert = route.indexOf('.from("sms_messages")');
+  assert.ok(guard > 0 && guard < insert, "settlement is checked before anything is recorded or sent");
+  assert.match(route, /settlementState\(/);
+  assert.match(route, /state !== "open"/);
+  // Auto SMS stays limited to the order confirmation.
+  const auto = readFileSync("src/lib/sms/auto-order.ts", "utf8");
+  assert.doesNotMatch(auto, /key === "payment"/);
+});

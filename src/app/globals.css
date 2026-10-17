@@ -688,45 +688,6 @@ textarea:focus-visible {
   background: #fff7e5;
 }
 
-.jalali-date-field {
-  min-width: 0;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid #dfe9e7;
-  border-radius: 11px;
-}
-
-.jalali-date-field legend {
-  padding: 0 7px;
-  color: #3f5c58;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.jalali-date-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.jalali-date-grid label {
-  display: grid;
-  gap: 5px;
-  color: #586e6a;
-  font-size: 12px;
-}
-
-.jalali-date-grid select {
-  width: 100%;
-  min-height: 41px;
-  padding: 7px 9px;
-  border: 1px solid #d9e6e4;
-  border-radius: 9px;
-  color: var(--text);
-  background: #fff;
-  font-size: 13px;
-}
-
 /* حداقل خوانایی برای ماژول‌هایی که هنوز بازطراحی نشده‌اند */
 main :where(
   p,
@@ -846,9 +807,5 @@ main small {
 
   .topbar-subtitle {
     font-size: 13px;
-  }
-
-  .jalali-date-grid {
-    grid-template-columns: 1fr;
   }
 }

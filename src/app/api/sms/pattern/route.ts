@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { SETTLEMENT_LABELS, settlementState } from "@/lib/bank/matching";
 import {
   normalizeIranMobile,
   patternSendingConfigured,
@@ -62,11 +63,43 @@ export async function POST(request: Request) {
 
   const { data: customer, error: customerError } = await supabase
     .from("customers")
-    .select("id,phone")
+    .select("id,phone,holo_balance_amount,holo_balance_status")
     .eq("id", customerId)
     .single();
   if (customerError || !customer) {
     return NextResponse.json({ error: "مشتری پیدا نشد." }, { status: 404 });
+  }
+
+  // Holoo misses many payments, so a payment reminder goes out only for a
+  // real invoice of this customer with no sign of payment anywhere.
+  if (pattern.key === "payment") {
+    const invoiceNumber = parsed.args[pattern.variables.findIndex((variable) => variable.fill === "invoice")];
+    const { data: invoice, error: invoiceError } = await supabase
+      .from("invoices")
+      .select("settled_at,total_amount,cash_amount,card_amount,check_amount")
+      .eq("customer_id", customerId)
+      .eq("invoice_number", invoiceNumber)
+      .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
+      .maybeSingle();
+    if (invoiceError) {
+      return NextResponse.json(
+        { error: "وضعیت تسویه فاکتور بررسی نشد. migration شماره 026 را در Supabase اجرا کنید." },
+        { status: 503 },
+      );
+    }
+    if (!invoice) {
+      return NextResponse.json({ error: "این شماره فاکتور برای این مشتری پیدا نشد." }, { status: 400 });
+    }
+    const state = settlementState({
+      invoice,
+      customerBalance: { status: customer.holo_balance_status, amount: customer.holo_balance_amount },
+    });
+    if (state !== "open") {
+      return NextResponse.json(
+        { error: `پیامک تسویه ارسال نشد: ${SETTLEMENT_LABELS[state]}.`, code: "INVOICE_ALREADY_SETTLED" },
+        { status: 409 },
+      );
+    }
   }
 
   const mobile = normalizeIranMobile(customer.phone as string | null);

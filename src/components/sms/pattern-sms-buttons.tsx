@@ -19,7 +19,13 @@ export type PatternOption = {
   }>;
 };
 
-export type PatternInvoice = { number: string; amount: string; items: string };
+export type PatternInvoice = {
+  number: string;
+  amount: string;
+  items: string;
+  /** Why the invoice counts as paid; the payment reminder is not offered for it. */
+  settled?: string | null;
+};
 
 type Props = {
   customerId: string;
@@ -62,7 +68,8 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
     setActive(pattern);
     setResult(null);
     requestId.current = null;
-    const latest = invoices[0];
+    // A payment reminder starts from the newest invoice with no sign of payment.
+    const latest = pattern.key === "payment" ? invoices.find((invoice) => !invoice.settled) : invoices[0];
     const sources: Record<string, string> = {
       name: customerName,
       title: "آقا",
@@ -123,6 +130,11 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
   }
 
   const args = active ? active.variables.map((variable) => values[variable.key] ?? "") : [];
+  const invoiceKey = active?.variables.find((variable) => variable.fill === "invoice")?.key;
+  const settledInvoice =
+    active?.key === "payment" && invoiceKey
+      ? invoices.find((invoice) => invoice.settled && invoice.number === (values[invoiceKey] ?? "").trim())
+      : undefined;
 
   return (
     <div className={styles.wrap}>
@@ -167,9 +179,11 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
             </label>
           ))}
           <datalist id={`invoices-${customerId}`}>
-            {invoices.map((invoice) => (
-              <option key={invoice.number} value={invoice.number} />
-            ))}
+            {invoices
+              .filter((invoice) => active.key !== "payment" || !invoice.settled)
+              .map((invoice) => (
+                <option key={invoice.number} value={invoice.number} />
+              ))}
           </datalist>
 
           <div className={styles.preview}>
@@ -178,8 +192,14 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
             <small>متن نهایی همان متنی است که ملی پیامک تأیید کرده است.</small>
           </div>
 
+          {settledInvoice ? (
+            <p className={styles.error}>
+              فاکتور {settledInvoice.number} پرداخت‌شده است ({settledInvoice.settled})؛ پیامک تسویه برایش فرستاده نمی‌شود.
+            </p>
+          ) : null}
+
           <div className={styles.actions}>
-            <button className={styles.send} type="button" onClick={send} disabled={loading}>
+            <button className={styles.send} type="button" onClick={send} disabled={loading || Boolean(settledInvoice)}>
               {loading ? "در حال ارسال…" : `ارسال به ${phone}`}
             </button>
             <button className={styles.cancel} type="button" onClick={() => setActive(null)}>

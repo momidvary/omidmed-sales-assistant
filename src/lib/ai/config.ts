@@ -8,8 +8,6 @@ export type AiFeature =
   | "assistant"
   | "content"
   | "sms_suggest"
-  | "expense_classify"
-  | "invoice_extract"
   | "image";
 
 export type AiConfigErrorCode =
@@ -24,8 +22,6 @@ const MODEL_ENV_CHAIN: Record<AiFeature, readonly string[]> = {
   assistant: ["OPENAI_ASSISTANT_MODEL", "OPENAI_MODEL"],
   content: ["OPENAI_CONTENT_MODEL", "OPENAI_MODEL"],
   sms_suggest: ["OPENAI_SMS_MODEL", "OPENAI_MODEL"],
-  expense_classify: ["OPENAI_EXPENSE_MODEL", "OPENAI_MODEL"],
-  invoice_extract: ["OPENAI_INVOICE_MODEL", "OPENAI_MODEL"],
   image: ["OPENAI_IMAGE_MODEL"],
 };
 
@@ -33,8 +29,6 @@ const FEATURE_LABEL: Record<AiFeature, string> = {
   assistant: "دستیار فروش",
   content: "استودیو محتوا",
   sms_suggest: "پیشنهاد پیامک",
-  expense_classify: "دسته‌بندی هزینه",
-  invoice_extract: "خواندن فاکتور",
   image: "تولید تصویر",
 };
 

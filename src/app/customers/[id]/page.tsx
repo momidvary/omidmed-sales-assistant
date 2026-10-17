@@ -18,6 +18,7 @@ import CustomerFilesManager, {
 import JalaliDateTimeField from "./jalali-date-time-field";
 import styles from "./customer.module.css";
 import { normalizeHoloBalance } from "@/lib/finance/metrics";
+import { SETTLEMENT_LABELS, settlementState } from "@/lib/bank/matching";
 
 const numberFormatter = new Intl.NumberFormat("fa-IR");
 
@@ -604,15 +605,27 @@ export default async function CustomerPage({
 
   const invoiceIds = invoices.map((invoice) => invoice.id);
 
-  const invoiceItemsResult = invoiceIds.length
-    ? await supabase
-        .from("invoice_items")
-        .select(
-          "id,invoice_id,row_number,product_name,quantity,unit_price,line_total,description",
-        )
-        .in("invoice_id", invoiceIds)
-        .order("row_number", { ascending: true })
-    : { data: [], error: null };
+  const [invoiceItemsResult, settledResult] = invoiceIds.length
+    ? await Promise.all([
+        supabase
+          .from("invoice_items")
+          .select(
+            "id,invoice_id,row_number,product_name,quantity,unit_price,line_total,description",
+          )
+          .in("invoice_id", invoiceIds)
+          .order("row_number", { ascending: true }),
+        // Separate query: settled_at arrives with migration 026, and the
+        // profile must still load before it is applied.
+        supabase
+          .from("invoices")
+          .select("id,settled_at")
+          .in("id", invoiceIds)
+          .not("settled_at", "is", null),
+      ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+  const settledAt = new Map(
+    ((settledResult.data ?? []) as Array<{ id: string; settled_at: string }>).map((row) => [row.id, row.settled_at]),
+  );
 
   const typedInvoiceItems = (
     invoiceItemsResult.data ?? []
@@ -887,6 +900,13 @@ export default async function CustomerPage({
             number: String(invoice.invoice_number).trim(),
             amount: new Intl.NumberFormat("fa-IR").format(Math.round(Number(invoice.total_amount ?? 0))),
             items: patternItemsSummary(itemsByInvoice.get(invoice.id) ?? []),
+            settled: (() => {
+              const state = settlementState({
+                invoice: { ...invoice, settled_at: settledAt.get(invoice.id) ?? null },
+                customerBalance: { status: customer.holo_balance_status, amount: customer.holo_balance_amount },
+              });
+              return state === "open" ? null : SETTLEMENT_LABELS[state];
+            })(),
           }))}
         patterns={configuredPatterns().map(({ key, button, description, text, variables }) => ({
           key,
