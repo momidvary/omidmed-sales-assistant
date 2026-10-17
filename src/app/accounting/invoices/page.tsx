@@ -96,6 +96,12 @@ export default async function UnsettledInvoicesPage({
                   <div className={styles.txHead}>
                     <div>
                       <strong>{formatNumber(invoice.total_amount)} تومان</strong>
+                      {invoice.paid_amount ? (
+                        <span>
+                          واریز شده {formatNumber(invoice.paid_amount)} · مانده{" "}
+                          {formatNumber(Number(invoice.total_amount) - invoice.paid_amount)}
+                        </span>
+                      ) : null}
                       <span>
                         فاکتور {invoice.invoice_number} · {formatDate(invoice.invoice_date)} ·{" "}
                         {days ? `${formatNumber(days)} روز پیش` : "امروز"}

@@ -23,7 +23,14 @@ export type OpenInvoice = {
   invoice_number: string;
   invoice_date: string;
   total_amount: number;
+  /** Already paid by confirmed deposits (toman). */
+  paid_amount?: number;
 };
+
+/** What is still owed on an invoice after earlier deposits. */
+export function invoiceDue(invoice: OpenInvoice) {
+  return Math.max(0, invoice.total_amount - (invoice.paid_amount ?? 0));
+}
 
 export type MatchCustomer = { id: string; name: string; contact_name?: string | null };
 
@@ -102,7 +109,7 @@ export function rialToToman(rial: number) {
 
 /** Smallest set of invoices (up to 4) whose totals add up to exactly `amount`. */
 export function invoicesSummingTo(invoices: OpenInvoice[], amount: number) {
-  const candidates = invoices.filter((invoice) => invoice.total_amount > 0 && invoice.total_amount <= amount).slice(0, 25);
+  const candidates = invoices.filter((invoice) => invoiceDue(invoice) > 0 && invoiceDue(invoice) <= amount).slice(0, 25);
   for (let size = 1; size <= Math.min(4, candidates.length); size += 1) {
     const found = searchSubset(candidates, amount, size, 0, []);
     if (found) return found;
@@ -120,8 +127,8 @@ function searchSubset(
   if (chosen.length === size) return remaining === 0 ? chosen : null;
   for (let index = start; index < invoices.length; index += 1) {
     const invoice = invoices[index];
-    if (invoice.total_amount > remaining) continue;
-    const found = searchSubset(invoices, remaining - invoice.total_amount, size, index + 1, [...chosen, invoice]);
+    if (invoiceDue(invoice) > remaining) continue;
+    const found = searchSubset(invoices, remaining - invoiceDue(invoice), size, index + 1, [...chosen, invoice]);
     if (found) return found;
   }
   return null;
@@ -195,9 +202,23 @@ export function suggestDepositMatches(input: {
         customerId,
         subset.length === 1 ? 50 : 40,
         subset.length === 1
-          ? `مبلغ دقیقاً برابر فاکتور ${subset[0].invoice_number} است`
+          ? subset[0].paid_amount
+            ? `مبلغ دقیقاً برابر مانده فاکتور ${subset[0].invoice_number} است`
+            : `مبلغ دقیقاً برابر فاکتور ${subset[0].invoice_number} است`
           : `مبلغ برابر جمع فاکتورهای ${subset.map((invoice) => invoice.invoice_number).join("، ")} است`,
       );
+    }
+
+    // Part payment: for a customer already recognised by card or name, the
+    // oldest invoice the deposit does not fully cover (e.g. 15m of a 22m).
+    for (const customerId of scores.keys()) {
+      if (invoiceIds.has(customerId)) continue;
+      const partial = (byCustomer.get(customerId) ?? [])
+        .filter((invoice) => invoiceDue(invoice) > amount)
+        .sort((a, b) => a.invoice_date.localeCompare(b.invoice_date))[0];
+      if (!partial) continue;
+      invoiceIds.set(customerId, [partial.id]);
+      add(customerId, 10, `بخشی از فاکتور ${partial.invoice_number} (پرداخت قسطی)`);
     }
   }
 

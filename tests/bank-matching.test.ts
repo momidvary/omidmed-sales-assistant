@@ -83,7 +83,7 @@ test("deposit suggestions combine learned card, name and exact amount (rial to t
     openInvoices: invoices,
   });
   assert.equal(learned[0].customerId, "c2");
-  assert.deepEqual(learned[0].invoiceIds, [], "no invoice is proposed when the amount does not match");
+  assert.deepEqual(learned[0].invoiceIds, ["i2"], "a smaller amount is proposed as part of the oldest invoice");
 });
 
 test("any evidence of payment blocks the payment reminder", () => {
@@ -106,4 +106,42 @@ test("category keys fit the database check and belong to one kind", () => {
   }
   assert.equal(new Set(BANK_CATEGORIES.map((c) => c.key)).size, BANK_CATEGORIES.length);
   assert.ok(!isValidCategory("bank_fee", "deposit"));
+});
+
+test("part payments: the first instalment points at the invoice, the last one matches what is left", () => {
+  const invoice: OpenInvoice = {
+    id: "big",
+    customer_id: "c1",
+    invoice_number: "500",
+    invoice_date: "2026-10-10",
+    total_amount: 22_000_000,
+  };
+  const first = suggestDepositMatches({
+    deposit: { amount_rial: 150_000_000, tx_date: "2026-10-16", counterparty_card: null, counterparty_name: "نسرین صالحی" },
+    customers,
+    rules: [],
+    openInvoices: [invoice],
+  });
+  assert.equal(first[0].customerId, "c1");
+  assert.deepEqual(first[0].invoiceIds, ["big"]);
+  assert.ok(first[0].reasons.some((reason) => reason.includes("قسطی")));
+
+  // Amount alone never proposes a part payment for an unrecognised payer.
+  const unknown = suggestDepositMatches({
+    deposit: { amount_rial: 150_000_000, tx_date: "2026-10-16", counterparty_card: null, counterparty_name: null },
+    customers,
+    rules: [],
+    openInvoices: [invoice],
+  });
+  assert.equal(unknown.length, 0);
+
+  const second = suggestDepositMatches({
+    deposit: { amount_rial: 70_000_000, tx_date: "2026-10-17", counterparty_card: null, counterparty_name: null },
+    customers,
+    rules: [],
+    openInvoices: [{ ...invoice, paid_amount: 15_000_000 }],
+  });
+  assert.equal(second[0].customerId, "c1");
+  assert.deepEqual(second[0].invoiceIds, ["big"]);
+  assert.match(second[0].reasons[0], /مانده فاکتور 500/);
 });
