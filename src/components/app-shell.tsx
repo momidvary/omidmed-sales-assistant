@@ -50,6 +50,7 @@ const menu = [
   { label: "اتصال هلو", icon: "upload" as const, href: "/settings/holo-sync", key: "holo-sync" },
   { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },
   { label: "ساخت پوستر", icon: "calendar" as const, href: "/content-studio", key: "content-studio" },
+  { label: "پیامک‌های امروز", icon: "check" as const, href: "/sms/today", key: "sms-today" },
   { label: "پیامک", icon: "sms" as const, href: "/sms", key: "sms" },
   { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
   { label: "حسابداری بانکی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
