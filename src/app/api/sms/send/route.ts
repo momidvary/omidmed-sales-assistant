@@ -77,7 +77,9 @@ export async function POST(request: Request) {
   const source = allowedSources.has(sourceValue)
     ? sourceValue
     : "manual";
-  const text = source === "campaign" ? ensureSingleSmsOptOut(rawText) : rawText;
+  // Promotional text on the public line must carry the opt-out marker.
+  const text =
+    source === "campaign" || body.marketing === true ? ensureSingleSmsOptOut(rawText) : rawText;
   const scheduleFollowup = body.scheduleFollowup !== false;
   const clientRequestId = clean(body.clientRequestId, 80);
 
