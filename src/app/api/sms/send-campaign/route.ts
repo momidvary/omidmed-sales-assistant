@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isOwner } from "@/lib/team";
 import { addTehranDaysAtTen } from "@/lib/campaigns/constants";
 
 // Sends in chunks of 100 across up to 2,500 campaign members, so this is the
@@ -110,6 +111,9 @@ export async function POST(request: Request) {
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError || !auth.user) {
     return NextResponse.json({ error: "ابتدا وارد برنامه شو." }, { status: 401 });
+  }
+  if (!(await isOwner())) {
+    return NextResponse.json({ error: "این کار فقط با حساب مدیر انجام می‌شود." }, { status: 403 });
   }
 
   const { error: tableError } = await supabase.from("sms_send_batches").select("id").limit(1);

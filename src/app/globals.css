@@ -809,3 +809,31 @@ main small {
     font-size: 13px;
   }
 }
+
+.restricted-card {
+  max-width: 520px;
+  margin: 40px auto;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  text-align: center;
+  box-shadow: var(--shadow-soft);
+}
+
+.restricted-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.restricted-card p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.restricted-card a {
+  color: var(--primary-dark);
+  font-weight: 800;
+}

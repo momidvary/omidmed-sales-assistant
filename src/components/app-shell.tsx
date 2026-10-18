@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { getTeamContext, OWNER_ONLY_SECTIONS } from "@/lib/team";
+
 export type IconName =
   | "home"
   | "users"
@@ -56,9 +58,10 @@ const menu = [
   { label: "حسابداری بانکی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
   { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
   { label: "گزارش‌ها", icon: "report" as const, href: "/reports", key: "reports" },
+  { label: "تیم", icon: "users" as const, href: "/settings/team", key: "team" },
 ];
 
-export default function AppShell({
+export default async function AppShell({
   active,
   title,
   subtitle,
@@ -69,6 +72,12 @@ export default function AppShell({
   subtitle?: string;
   children: React.ReactNode;
 }) {
+  const team = await getTeamContext();
+  const isSecretary = team?.role === "secretary";
+  const visibleMenu = isSecretary ? menu.filter((item) => !OWNER_ONLY_SECTIONS.has(item.key)) : menu;
+  const userName = isSecretary ? team?.displayName ?? "منشی" : "محمد امیدواری";
+  const userRole = isSecretary ? "منشی فروش" : "مدیر فروش امیدمِد";
+
   const today = new Intl.DateTimeFormat("fa-IR", {
     dateStyle: "full",
     timeZone: "Asia/Tehran",
@@ -85,7 +94,7 @@ export default function AppShell({
           </div>
         </div>
         <nav className="nav" aria-label="منوی اصلی">
-          {menu.map((item) => {
+          {visibleMenu.map((item) => {
             const className = `nav-item ${active === item.key ? "active" : ""} ${!item.href ? "disabled" : ""}`;
             if (!item.href) {
               return (
@@ -107,7 +116,7 @@ export default function AppShell({
           <span className="status-dot" />
           <div>
             <strong>اتصال امن برقرار است</strong>
-            <p>اطلاعات فقط در حساب شخصی تو ذخیره می‌شود.</p>
+            <p>{isSecretary ? "با حساب منشی وارد شده‌اید." : "اطلاعات فقط در حساب امیدمد ذخیره می‌شود."}</p>
           </div>
         </div>
       </aside>
@@ -120,10 +129,10 @@ export default function AppShell({
             {subtitle ? <p className="topbar-subtitle">{subtitle}</p> : null}
           </div>
           <div className="profile">
-            <div className="avatar">م</div>
+            <div className="avatar">{userName.slice(0, 1)}</div>
             <div className="profile-details">
-              <strong>محمد امیدواری</strong>
-              <span>مدیر فروش امیدمِد</span>
+              <strong>{userName}</strong>
+              <span>{userRole}</span>
             </div>
             <form action="/auth/signout" method="post">
               <button className="signout-button" type="submit">خروج</button>
