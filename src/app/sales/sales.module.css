@@ -3,7 +3,7 @@
   margin-bottom: 15px;
   padding: 13px 16px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.8;
   font-weight: 750;
 }
@@ -41,7 +41,7 @@
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -55,7 +55,7 @@
   max-width: 780px;
   margin: 0;
   color: #d5ebe8;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.95;
 }
 
@@ -75,7 +75,7 @@
   color: #075f58;
   background: #fff;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
   white-space: nowrap;
 }
@@ -110,7 +110,7 @@
 
 .metrics span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .metrics strong {
@@ -120,7 +120,7 @@
 
 .metrics small {
   color: #849590;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .searchBar {
@@ -145,7 +145,7 @@
   outline: 0;
   color: var(--text);
   background: transparent;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .searchBar button,
@@ -156,7 +156,7 @@
   align-items: center;
   border-radius: 9px;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -208,7 +208,7 @@
 .column header p {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -221,7 +221,7 @@
   border-radius: 9px;
   color: #17675f;
   background: #e8f5f2;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
 }
 
@@ -230,7 +230,7 @@
   color: #71837f;
   border-bottom: 1px solid #e5edeb;
   background: #fbfdfc;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .columnValue b {
@@ -266,7 +266,7 @@
   display: block;
   color: var(--text);
   text-decoration: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 900;
   line-height: 1.6;
 }
@@ -279,13 +279,13 @@
   display: block;
   margin-top: 3px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .priority {
   padding: 5px 7px;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 850;
 }
 
@@ -323,13 +323,13 @@
 
 .card dt {
   color: #7a8c88;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .card dd {
   margin: 0;
   color: #344e49;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 750;
   text-align: left;
   overflow-wrap: anywhere;
@@ -344,7 +344,7 @@
   padding-top: 9px;
   border-top: 1px solid #edf2f1;
   color: #5d716d;
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.8;
 }
 
@@ -366,7 +366,7 @@
   color: #315f59;
   background: #edf5f4;
   text-decoration: none;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -386,7 +386,7 @@
   border-radius: 8px;
   color: #17675f;
   background: #edf7f5;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 850;
   cursor: pointer;
 }
@@ -413,7 +413,7 @@
   color: #80918d;
   background: #fbfdfc;
   text-align: center;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 @media (max-width: 1000px) {

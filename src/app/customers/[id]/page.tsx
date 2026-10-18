@@ -279,18 +279,19 @@ function buildRecommendation(input: {
     } satisfies SmartRecommendation;
   }
 
+  // Holoo often misses settlements, so its balance alone never drives a
+  // payment demand: the message stays a general one and the reason says to
+  // check the bank data first.
   if (debtAmount > 0) {
     return {
-      level: "urgent",
-      title: "پیگیری مودبانه تسویه در اولویت است",
-      reason: `در فاکتورهای ثبت‌شده، حدود ${formatMoney(
+      level: "important",
+      title: "در هلو مانده حساب دارد؛ اول پرداخت‌ها را بررسی کنید",
+      reason: `هلو حدود ${formatMoney(
         debtAmount,
-      )} تومان مانده بدهی دیده می‌شود.`,
-      channel: "پیامک رسمی، سپس تماس",
-      nextStep: "ارسال یادآوری تسویه و ثبت وعده پرداخت",
-      defaultMessage: `${customerName} گرامی، مانده حساب مجموعه شما مبلغ ${formatMoney(
-        debtAmount,
-      )} تومان است. لطفاً در اولین فرصت نسبت به تسویه اقدام فرمایید. امیدمِد`,
+      )} تومان مانده نشان می‌دهد، ولی تسویه‌ها در هلو کامل ثبت نمی‌شوند. قبل از پیگیری پرداخت، در حسابداری بانکی بررسی شود.`,
+      channel: "بررسی پرداخت، سپس تماس",
+      nextStep: "بررسی واریزهای مشتری در بانک",
+      defaultMessage: `${customerName} گرامی، وقت بخیر. برای تهیه لوازم مصرفی فیزیوتراپی و اطلاع از قیمت روز در خدمتتان هستیم. امیدمِد`,
     } satisfies SmartRecommendation;
   }
 
@@ -954,13 +955,7 @@ export default async function CustomerPage({
             customerId={customer.id}
             customerName={customer.name}
             phone={customer.phone}
-            source={
-              debtAmount > 0
-                ? "accounting"
-                : openOpportunity
-                  ? "quote"
-                  : "customer"
-            }
+            source={openOpportunity ? "quote" : "customer"}
             opportunityId={openOpportunity?.id}
             defaultText={recommendation.defaultMessage}
             compact
@@ -1309,6 +1304,8 @@ export default async function CustomerPage({
         </article>
       </section>
 
+      <details className={styles.collapse}>
+        <summary className={styles.collapseTitle}>محصولات و سابقه خرید</summary>
       <section className={styles.sectionCard} id="products">
         <div className={styles.sectionHeading}>
           <div className={styles.productIcon}>کالا</div>
@@ -1362,7 +1359,10 @@ export default async function CustomerPage({
           </div>
         )}
       </section>
+      </details>
 
+      <details className={styles.collapse}>
+        <summary className={styles.collapseTitle}>فایل‌ها و مدارک</summary>
       <div id="files">
         {!customerFilesResult.error ? (
           <CustomerFilesManager
@@ -1377,7 +1377,10 @@ export default async function CustomerPage({
           </div>
         )}
       </div>
+      </details>
 
+      <details className={styles.collapse}>
+        <summary className={styles.collapseTitle}>قیمت‌ها و فرصت‌های فروش</summary>
       <section
         className={styles.sectionCard}
         id="opportunities"
@@ -1464,7 +1467,10 @@ export default async function CustomerPage({
           </div>
         )}
       </section>
+      </details>
 
+      <details className={styles.collapse}>
+        <summary className={styles.collapseTitle}>فاکتورها و اقلام خریداری‌شده</summary>
       <section className={styles.sectionCard} id="invoices">
         <div className={styles.sectionHeading}>
           <div className={styles.invoiceIcon}>فاکتور</div>
@@ -1632,6 +1638,7 @@ export default async function CustomerPage({
           </div>
         )}
       </section>
+      </details>
     </AppShell>
   );
 }

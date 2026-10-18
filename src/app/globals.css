@@ -155,7 +155,7 @@ textarea:focus-visible {
 
 .brand span {
   color: #b6d5d1;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .nav {
@@ -223,13 +223,13 @@ textarea:focus-visible {
 }
 
 .sidebar-status strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .sidebar-status p {
   margin: 5px 0 0;
   color: #b3d0cc;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.75;
 }
 
@@ -253,7 +253,7 @@ textarea:focus-visible {
 .eyebrow {
   margin: 0 0 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -298,12 +298,12 @@ textarea:focus-visible {
 
 .profile strong {
   margin-bottom: 3px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .profile span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .profile-details {
@@ -317,7 +317,7 @@ textarea:focus-visible {
   border-radius: 10px;
   color: #526c68;
   background: #fff;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -362,7 +362,7 @@ textarea:focus-visible {
   margin-bottom: 13px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -445,7 +445,7 @@ textarea:focus-visible {
 .stat-card span {
   margin-bottom: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .stat-card strong {
@@ -457,7 +457,7 @@ textarea:focus-visible {
 .stat-card p {
   margin: 0;
   color: #849590;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
 }
 
@@ -488,7 +488,7 @@ textarea:focus-visible {
 
 .section-kicker {
   color: var(--primary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -502,7 +502,7 @@ textarea:focus-visible {
   color: var(--primary);
   background: transparent;
   text-decoration: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -536,7 +536,7 @@ textarea:focus-visible {
   max-width: 350px;
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -548,7 +548,7 @@ textarea:focus-visible {
   border-radius: 9px;
   color: var(--primary-dark);
   background: var(--primary-soft);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -566,7 +566,7 @@ textarea:focus-visible {
   color: #4f6561;
   background: #fafcfc;
   text-align: right;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
   cursor: pointer;
 }
@@ -589,7 +589,7 @@ textarea:focus-visible {
   gap: 10px;
   color: #7f908d;
   background: #fff;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .chat-box button {
@@ -598,7 +598,7 @@ textarea:focus-visible {
   border-radius: 9px;
   color: #fff;
   background: var(--primary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -634,7 +634,7 @@ textarea:focus-visible {
   border-radius: 8px;
   color: var(--primary);
   background: var(--surface-soft);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
 }
 
@@ -645,17 +645,17 @@ textarea:focus-visible {
 
 .mini-customer strong {
   margin-bottom: 3px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .mini-customer small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .mini-customer b {
   color: #3f5955;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .roadmap-list {
@@ -673,7 +673,7 @@ textarea:focus-visible {
   border: 1px solid #e4ecea;
   border-radius: 11px;
   color: #687c78;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .roadmap-item.done {
@@ -765,7 +765,7 @@ main small {
     min-height: 42px;
     flex: 0 0 auto;
     padding: 0 12px;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .sidebar-status {
@@ -806,7 +806,7 @@ main small {
   }
 
   .topbar-subtitle {
-    font-size: 13px;
+    font-size: 14px;
   }
 }
 
@@ -836,4 +836,37 @@ main small {
 .restricted-card a {
   color: var(--primary-dark);
   font-weight: 800;
+}
+
+.nav-group {
+  display: grid;
+  gap: 4px;
+}
+
+.nav-group + .nav-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-group-title {
+  padding: 0 14px 2px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.nav-group .nav-item {
+  min-height: 42px;
+}
+
+@media (max-width: 780px) {
+  /* The phone menu is one scrolling row; groups dissolve into it. */
+  .nav-group {
+    display: contents;
+  }
+
+  .nav-group-title {
+    display: none;
+  }
 }

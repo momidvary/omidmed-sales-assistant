@@ -45,20 +45,38 @@ export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
   );
 }
 
-const menu = [
-  { label: "امروز", icon: "home" as const, href: "/", key: "home" },
-  { label: "مشتریان", icon: "users" as const, href: "/customers", key: "customers" },
-  { label: "قیف فروش", icon: "followup" as const, href: "/sales", key: "sales" },
-  { label: "اتصال هلو", icon: "upload" as const, href: "/settings/holo-sync", key: "holo-sync" },
-  { label: "کمپین‌ها", icon: "campaign" as const, href: "/campaigns", key: "campaigns" },
-  { label: "ساخت پوستر", icon: "calendar" as const, href: "/content-studio", key: "content-studio" },
-  { label: "پیامک‌های امروز", icon: "check" as const, href: "/sms/today", key: "sms-today" },
-  { label: "پیامک", icon: "sms" as const, href: "/sms", key: "sms" },
-  { label: "قیمت‌های باز", icon: "quote" as const, href: "/quotes", key: "quotes" },
-  { label: "حسابداری بانکی", icon: "accounting" as const, href: "/accounting", key: "accounting" },
-  { label: "دستیار هوش مصنوعی", icon: "assistant" as const, href: "/assistant", key: "assistant" },
-  { label: "گزارش‌ها", icon: "report" as const, href: "/reports", key: "reports" },
-  { label: "تیم", icon: "users" as const, href: "/settings/team", key: "team" },
+type MenuItem = { label: string; icon: IconName; href: string; key: string };
+
+// Grouped so daily work comes first; the management group is owner-only.
+const menuGroups: Array<{ title: string; items: MenuItem[] }> = [
+  {
+    title: "کار روزانه",
+    items: [
+      { label: "کارهای امروز", icon: "home", href: "/", key: "home" },
+      { label: "پیامک‌های امروز", icon: "check", href: "/sms/today", key: "sms-today" },
+      { label: "مشتریان", icon: "users", href: "/customers", key: "customers" },
+      { label: "پیگیری قیمت‌ها", icon: "quote", href: "/quotes", key: "quotes" },
+    ],
+  },
+  {
+    title: "فروش و بازاریابی",
+    items: [
+      { label: "مشتریان بالقوه", icon: "followup", href: "/sales", key: "sales" },
+      { label: "ساخت پوستر", icon: "calendar", href: "/content-studio", key: "content-studio" },
+      { label: "تاریخچه پیامک‌ها", icon: "sms", href: "/sms", key: "sms" },
+      { label: "گزارش‌ها", icon: "report", href: "/reports", key: "reports" },
+      { label: "دستیار هوش مصنوعی", icon: "assistant", href: "/assistant", key: "assistant" },
+    ],
+  },
+  {
+    title: "مدیریت",
+    items: [
+      { label: "حسابداری بانکی", icon: "accounting", href: "/accounting", key: "accounting" },
+      { label: "کمپین‌ها", icon: "campaign", href: "/campaigns", key: "campaigns" },
+      { label: "اتصال هلو", icon: "upload", href: "/settings/holo-sync", key: "holo-sync" },
+      { label: "تیم", icon: "users", href: "/settings/team", key: "team" },
+    ],
+  },
 ];
 
 export default async function AppShell({
@@ -74,7 +92,12 @@ export default async function AppShell({
 }) {
   const team = await getTeamContext();
   const isSecretary = team?.role === "secretary";
-  const visibleMenu = isSecretary ? menu.filter((item) => !OWNER_ONLY_SECTIONS.has(item.key)) : menu;
+  const visibleGroups = menuGroups
+    .map((group) => ({
+      ...group,
+      items: isSecretary ? group.items.filter((item) => !OWNER_ONLY_SECTIONS.has(item.key)) : group.items,
+    }))
+    .filter((group) => group.items.length);
   const userName = isSecretary ? team?.displayName ?? "منشی" : "محمد امیدواری";
   const userRole = isSecretary ? "منشی فروش" : "مدیر فروش امیدمِد";
 
@@ -94,23 +117,17 @@ export default async function AppShell({
           </div>
         </div>
         <nav className="nav" aria-label="منوی اصلی">
-          {visibleMenu.map((item) => {
-            const className = `nav-item ${active === item.key ? "active" : ""} ${!item.href ? "disabled" : ""}`;
-            if (!item.href) {
-              return (
-                <span className={className} key={item.key} aria-disabled="true">
+          {visibleGroups.map((group) => (
+            <div className="nav-group" key={group.title}>
+              <span className="nav-group-title">{group.title}</span>
+              {group.items.map((item) => (
+                <Link className={`nav-item ${active === item.key ? "active" : ""}`} href={item.href} key={item.key}>
                   <Icon name={item.icon} />
                   <span>{item.label}</span>
-                </span>
-              );
-            }
-            return (
-              <Link className={className} href={item.href} key={item.key}>
-                <Icon name={item.icon} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
+                </Link>
+              ))}
+            </div>
+          ))}
         </nav>
         <div className="sidebar-status">
           <span className="status-dot" />

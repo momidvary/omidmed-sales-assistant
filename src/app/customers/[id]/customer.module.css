@@ -11,7 +11,7 @@
 .backActions a {
   color: var(--primary);
   text-decoration: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -39,7 +39,7 @@
   margin-bottom: 14px;
   padding: 13px 15px;
   border-radius: 11px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.85;
   font-weight: 700;
 }
@@ -102,7 +102,7 @@
 .profileIdentity p {
   margin: 0;
   color: #d5ebe8;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.8;
 }
 
@@ -121,7 +121,7 @@
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 850;
   white-space: nowrap;
 }
@@ -197,7 +197,7 @@
   gap: 7px;
   border-radius: 10px;
   text-decoration: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -244,7 +244,7 @@
   color: #536c67;
   background: #f1f6f5;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -298,7 +298,7 @@
 
 .recommendationBody > span {
   color: #5d746f;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -311,7 +311,7 @@
   max-width: 850px;
   margin: 0;
   color: #566c68;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -325,7 +325,7 @@
 
 .recommendationMeta span {
   color: #697d79;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .recommendationMeta b {
@@ -360,7 +360,7 @@
 
 .metrics span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .metrics strong {
@@ -371,7 +371,7 @@
 
 .metrics small {
   color: #879692;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .compactMetric {
@@ -445,7 +445,7 @@
   border-radius: 12px;
   color: #17675f;
   background: #e8f5f2;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 900;
 }
 
@@ -482,7 +482,7 @@
 .sectionHeading p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
 }
 
@@ -503,13 +503,13 @@
 .details dt {
   margin-bottom: 5px;
   color: #7f918d;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .details dd {
   margin: 0;
   color: #2c4641;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 750;
   line-height: 1.75;
   overflow-wrap: anywhere;
@@ -528,14 +528,14 @@
 
 .noteBox span {
   color: #8a6a2b;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .noteBox p {
   margin: 6px 0 0;
   color: #5e5540;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
   white-space: pre-wrap;
 }
@@ -558,12 +558,12 @@
 
 .pipelineRows span {
   color: #71827e;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .pipelineRows strong {
   color: #2d4843;
-  font-size: 13px;
+  font-size: 14px;
   text-align: left;
 }
 
@@ -577,7 +577,7 @@
   color: #17675f;
   background: #eaf6f3;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -597,7 +597,7 @@
   display: grid;
   gap: 7px;
   color: #3e5753;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -615,7 +615,7 @@
   background: #fbfdfc;
   outline: 0;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .followupForm textarea {
@@ -638,7 +638,7 @@
   border-radius: 10px;
   color: #fff;
   background: #0d3835;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
   cursor: pointer;
 }
@@ -699,12 +699,12 @@
 }
 
 .timelineTop strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .timelineTop time {
   color: #879692;
-  font-size: 11px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -715,14 +715,14 @@
   border-radius: 999px;
   color: #60736f;
   background: #f0f5f4;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .timelineContent p {
   margin: 8px 0 0;
   color: #4d625f;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
   white-space: pre-wrap;
 }
@@ -731,7 +731,7 @@
   display: block;
   margin-top: 7px;
   color: #7b8d89;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.75;
 }
 
@@ -748,7 +748,7 @@
   color: #778985;
   background: #fafcfc;
   text-align: center;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -790,12 +790,12 @@
 .productCard span,
 .productCard small {
   color: #798b87;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .productCard b {
   color: #2e4944;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .productCard small {
@@ -814,7 +814,7 @@
   border-radius: 999px;
   color: #17675f;
   background: #eaf6f3;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -831,7 +831,7 @@
 
 .fileUploadForm small {
   color: #82938f;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -880,7 +880,7 @@
 
 .fileMetaTop time {
   color: #879692;
-  font-size: 10px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -889,21 +889,21 @@
   border-radius: 999px;
   color: #17675f;
   background: #eaf6f4;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .fileBody > strong {
   display: block;
   color: #203a36;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
 }
 
 .fileBody > p {
   margin: 5px 0 0;
   color: #7b8b88;
-  font-size: 11px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -911,7 +911,7 @@
   display: block;
   margin-top: 7px;
   color: #82928f;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .invoiceTag {
@@ -921,7 +921,7 @@
   border-radius: 8px;
   color: #7a5a1f;
   background: #fff4dc;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -941,7 +941,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 9px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -1015,13 +1015,13 @@
 
 .opportunityCard dt {
   color: #7b8d89;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .opportunityCard dd {
   margin: 0;
   color: #314a46;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -1030,7 +1030,7 @@
   padding-top: 10px;
   border-top: 1px solid #edf2f1;
   color: #5c716d;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.85;
 }
 
@@ -1068,12 +1068,12 @@
 
 .invoiceDetails summary strong {
   margin-bottom: 4px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .invoiceDetails summary span {
   color: #7a8c88;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .invoiceSummaryNumbers {
@@ -1098,7 +1098,7 @@
 
 .invoiceMeta span {
   color: #697c78;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .invoiceMeta b {
@@ -1120,7 +1120,7 @@
   padding: 12px 11px;
   border-bottom: 1px solid #e8efed;
   text-align: right;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.75;
   vertical-align: top;
 }
@@ -1274,4 +1274,31 @@
   .profileNav {
     top: 5px;
   }
+}
+
+/* Lower profile sections stay closed until needed. */
+.collapse {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.collapseTitle {
+  padding: 16px 20px;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.collapse[open] > .collapseTitle {
+  border-bottom: 1px solid var(--line);
+}
+
+.collapse > :not(summary) {
+  margin: 0;
+  border: 0;
+  box-shadow: none;
 }

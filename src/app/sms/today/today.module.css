@@ -7,7 +7,7 @@
   display: block;
   margin: 0 0 12px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.9;
 }
 
@@ -31,7 +31,7 @@
   display: grid;
   gap: 5px;
   color: #4b625e;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -42,7 +42,7 @@
   border: 1px solid var(--line);
   border-radius: 9px;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .card {
@@ -69,7 +69,7 @@
   align-items: center;
   gap: 8px;
   margin-inline-end: auto;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .pick a {
@@ -81,7 +81,7 @@
 .score {
   padding: 4px 10px;
   border-radius: 20px;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -99,21 +99,21 @@
   margin: 10px 0 6px;
   padding-inline-start: 18px;
   color: #3e5853;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 2;
 }
 
 .note {
   margin: 0 0 8px;
   color: #93620a;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .channels {
   display: grid;
   gap: 5px;
   margin: 8px 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .channels label {
@@ -133,7 +133,7 @@
   background: #f8fbfa;
   color: #2f4d48;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -157,7 +157,7 @@
   background: #fbfdfd;
   color: #3e5853;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.8;
   text-align: start;
   cursor: pointer;
@@ -177,7 +177,7 @@
   padding: 0 14px;
   border-radius: 9px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 900;
   cursor: pointer;
 }
@@ -202,13 +202,13 @@
 
 .ok {
   color: var(--success);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .error {
   color: var(--danger);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .empty {
@@ -222,12 +222,12 @@
 .empty h3 {
   margin: 0 0 6px;
   color: #33504b;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .empty p {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 @media (max-width: 620px) {

@@ -10,7 +10,7 @@
   border: 0;
   border-radius: 10px;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 900;
   cursor: pointer;
 }
@@ -45,7 +45,7 @@
   display: grid;
   gap: 6px;
   color: #4a686f;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -62,7 +62,7 @@
   color: #243f46;
   background: #fbfdfd;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -89,7 +89,7 @@
   border-radius: 9px;
   color: #52717a;
   background: #f0f7fa;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .recipient b {
@@ -98,7 +98,7 @@
 
 .counter {
   color: #829397;
-  font-size: 11px;
+  font-size: 13px;
   text-align: left;
 }
 
@@ -107,7 +107,7 @@
   display: flex !important;
   align-items: center;
   gap: 8px !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   line-height: 1.8;
 }
 
@@ -134,7 +134,7 @@
 .error {
   padding: 10px 12px;
   border-radius: 9px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.8;
 }
 
@@ -175,7 +175,7 @@
 .campaignHeader p {
   margin: 4px 0 0 !important;
   color: #617973 !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   line-height: 1.8 !important;
 }
 
@@ -184,13 +184,13 @@
   border-radius: 20px;
   color: #2f665d;
   background: #e6f3ef;
-  font-size: 11px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .placeholders {
   color: #6a7c78;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .placeholders code {
@@ -238,7 +238,7 @@
   border-radius: 7px;
   color: #fff;
   background: linear-gradient(135deg, #155d89, #16817a);
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.4px;
 }
 
@@ -258,12 +258,12 @@
 
 .aiIntro strong {
   color: #234f5c;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .aiIntro span {
   color: #6b7f84;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.8;
 }
 
@@ -287,7 +287,7 @@
   border-radius: 8px;
   color: #496b73;
   background: #edf7f9;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -324,12 +324,12 @@
 .aiSuggestion header span,
 .aiSuggestion header small {
   color: #799095;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .aiSuggestion header strong {
   color: #294f59;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .aiMessage {
@@ -338,7 +338,7 @@
   border-radius: 8px;
   color: #263f45;
   background: #f6faf9;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 2;
   white-space: pre-wrap;
 }
@@ -346,7 +346,7 @@
 .aiReason {
   margin: 0;
   color: #718287;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.8;
 }
 
