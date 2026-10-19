@@ -287,7 +287,13 @@ export default async function Home({
   }));
   const byValue = (a: WorkspaceItem, b: WorkspaceItem) =>
     numeric(b.customer.total_sales) - numeric(a.customer.total_sales);
-  const needsItems = items.filter((item) => item.need.needsFollowup).sort(byValue);
+  // Calls follow the same score as today's SMS (timing, trend, quotes,
+  // value); customers without a number go last so the number gets added.
+  const hasPhone = (item: WorkspaceItem) => Boolean(item.customer.phone?.trim());
+  const scoreOf = (item: WorkspaceItem) => smsTargets.scoreById.get(item.customer.id)?.score ?? 0;
+  const byPriority = (a: WorkspaceItem, b: WorkspaceItem) =>
+    Number(hasPhone(b)) - Number(hasPhone(a)) || scoreOf(b) - scoreOf(a) || byValue(a, b);
+  const needsItems = items.filter((item) => item.need.needsFollowup).sort(byPriority);
   const okItems = items.filter((item) => !item.need.needsFollowup).sort(byValue);
   const listItems = view === "ok" ? okItems : needsItems;
 
@@ -463,7 +469,12 @@ export default async function Home({
                     </div>
 
                     <div className={styles.reasons}>
-                      <span className={styles.reason}>{need.reason}</span>
+                      {(smsTargets.scoreById.get(customer.id)?.reasons ?? [need.reason]).slice(0, 3).map((reason) => (
+                        <span className={styles.reason} key={reason}>
+                          {reason}
+                        </span>
+                      ))}
+                      {!customer.phone?.trim() ? <span className={styles.noPhone}>شماره ثبت نشده</span> : null}
                     </div>
 
                     <div className={styles.actions}>
