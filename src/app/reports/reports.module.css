@@ -19,7 +19,7 @@
 
 .periodForm label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -53,7 +53,7 @@
   justify-content: center;
   gap: 7px;
   text-decoration: none;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -72,7 +72,7 @@
 
 .rangeText {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.8;
   text-align: left;
 }
@@ -84,7 +84,7 @@
   border-radius: 12px;
   color: #984b40;
   background: #fff5f3;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .metrics {
@@ -111,7 +111,7 @@
 
 .metric span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .metric strong {
@@ -122,7 +122,7 @@
 
 .metric small {
   color: #8a9b98;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.7;
 }
 
@@ -164,7 +164,7 @@
 .panelHeader p {
   margin: 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.7;
 }
 
@@ -174,7 +174,7 @@
   border-radius: 999px;
   color: var(--primary-dark);
   background: var(--primary-soft);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -201,16 +201,16 @@
   border-radius: 8px;
   color: var(--primary);
   background: var(--surface-soft);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 900;
 }
 
 .rankItem strong,
 .rankItem small { display: block; }
 
-.rankItem strong { margin-bottom: 5px; font-size: 10px; }
-.rankItem small { color: var(--muted); font-size: 8px; }
-.rankValue { color: #35534f; font-size: 9px; font-weight: 800; text-align: left; }
+.rankItem strong { margin-bottom: 5px; font-size: 13px; }
+.rankItem small { color: var(--muted); font-size: 12px; }
+.rankValue { color: #35534f; font-size: 12px; font-weight: 800; text-align: left; }
 
 .followupGrid {
   display: grid;
@@ -228,7 +228,7 @@
 
 .followupCard span,
 .followupCard strong { display: block; }
-.followupCard span { color: var(--muted); font-size: 9px; }
+.followupCard span { color: var(--muted); font-size: 12px; }
 .followupCard strong { margin-top: 7px; font-size: 19px; }
 
 .chart { display: grid; gap: 10px; margin-top: 16px; }
@@ -240,10 +240,10 @@
   gap: 10px;
 }
 
-.chartLabel { color: #516762; font-size: 9px; }
+.chartLabel { color: #516762; font-size: 12px; }
 .chartTrack { height: 9px; overflow: hidden; border-radius: 999px; background: #edf3f2; }
 .chartBar { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #087f73, #31b7a6); }
-.chartValue { color: #536a66; font-size: 9px; font-weight: 800; text-align: left; }
+.chartValue { color: #536a66; font-size: 12px; font-weight: 800; text-align: left; }
 
 .exportPanel {
   margin-top: 18px;
@@ -254,7 +254,7 @@
 }
 
 .exportPanel h2 { margin: 0 0 7px; font-size: 16px; }
-.exportPanel > p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.8; }
+.exportPanel > p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.8; }
 
 .exportGrid {
   display: grid;
@@ -270,8 +270,8 @@
   background: #fff;
 }
 
-.exportCard h3 { margin: 0 0 6px; font-size: 11px; }
-.exportCard p { min-height: 43px; margin: 0; color: var(--muted); font-size: 8px; line-height: 1.75; }
+.exportCard h3 { margin: 0 0 6px; font-size: 13px; }
+.exportCard p { min-height: 43px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.75; }
 .exportActions { display: flex; gap: 7px; margin-top: 12px; }
 .exportActions a { flex: 1; }
 
@@ -281,7 +281,7 @@
   border-top: 1px solid #dcebe8;
 }
 
-.smsBox h3 { margin: 0 0 10px; font-size: 12px; }
+.smsBox h3 { margin: 0 0 10px; font-size: 14px; }
 .exportFilters { display: flex; flex-wrap: wrap; gap: 8px; }
 .exportFilters input { width: 150px; }
 
@@ -289,7 +289,7 @@
   padding: 32px 15px;
   color: var(--muted);
   text-align: center;
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.9;
 }
 

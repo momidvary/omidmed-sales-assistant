@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getTeamContext } from "@/lib/team";
 import {
   safeOriginalFilename,
   validateMedicalDocument,
@@ -36,12 +37,14 @@ export async function POST(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return errorResponse("UNAUTHORIZED", "ورود به حساب لازم است.", 401);
+  // A secretary's files belong to the owner's account, like the rest of the data.
+  const ownerId = (await getTeamContext())?.ownerId ?? user.id;
 
   const { data: customer, error: customerError } = await supabase
     .from("customers")
     .select("id")
     .eq("id", customerId)
-    .eq("owner_id", user.id)
+    .eq("owner_id", ownerId)
     .maybeSingle();
   if (customerError) {
     return errorResponse("CUSTOMER_READ_FAILED", "بررسی مشتری انجام نشد.", 503);
@@ -74,7 +77,7 @@ export async function POST(
     );
   }
 
-  const storagePath = `${user.id}/${customerId}/${crypto.randomUUID()}.${validated.extension}`;
+  const storagePath = `${ownerId}/${customerId}/${crypto.randomUUID()}.${validated.extension}`;
   const { error: uploadError } = await supabase.storage
     .from("customer-files")
     .upload(storagePath, file, {
@@ -124,6 +127,8 @@ export async function DELETE(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return errorResponse("UNAUTHORIZED", "ورود به حساب لازم است.", 401);
+  // A secretary's files belong to the owner's account, like the rest of the data.
+  const ownerId = (await getTeamContext())?.ownerId ?? user.id;
 
   let body: { fileId?: unknown };
   try {
@@ -141,7 +146,7 @@ export async function DELETE(
     .select("id,storage_path")
     .eq("id", fileId)
     .eq("customer_id", customerId)
-    .eq("owner_id", user.id)
+    .eq("owner_id", ownerId)
     .maybeSingle();
   if (readError) return errorResponse("CUSTOMER_FILE_READ", "بررسی فایل انجام نشد.", 503);
   if (!row) return errorResponse("CUSTOMER_FILE_NOT_FOUND", "فایل در دسترس نیست.", 404);
@@ -150,7 +155,7 @@ export async function DELETE(
     .from("customer_files")
     .delete()
     .eq("id", row.id)
-    .eq("owner_id", user.id);
+    .eq("owner_id", ownerId);
   if (deleteError) return errorResponse("CUSTOMER_FILE_DELETE", "حذف فایل انجام نشد.", 503);
 
   // The database record is removed first so a storage-cleanup outage cannot

@@ -23,9 +23,9 @@ export default async function LoginPage() {
         </div>
 
         <div className={styles.heading}>
-          <span className={styles.badge}>ورود اختصاصی مدیر</span>
+          <span className={styles.badge}>ورود مدیر و منشی</span>
           <h1 id="login-title">ورود به دستیار فروش</h1>
-          <p>برای مشاهده اطلاعات فروش، ایمیل و رمز عبور خودت را وارد کن.</p>
+          <p>ایمیل و رمز عبوری را که برایتان ساخته شده وارد کنید.</p>
         </div>
 
         <LoginForm />

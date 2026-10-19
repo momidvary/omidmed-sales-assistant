@@ -5,6 +5,7 @@ import { extractPdfItems, MAX_STATEMENT_PDF_BYTES } from "@/lib/bank/pdf-items";
 import { parseResalatStatement, statementProblems } from "@/lib/bank/resalat-statement";
 import { jalaliToGregorian } from "@/lib/jalali";
 import { createClient } from "@/lib/supabase/server";
+import { isOwner } from "@/lib/team";
 
 // Reads a Resalat statement PDF. mode=preview only parses and reports what
 // would be imported; mode=import writes the new rows.
@@ -16,6 +17,9 @@ export async function POST(request: Request) {
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError || !auth.user) {
     return NextResponse.json({ error: "ابتدا وارد برنامه شو." }, { status: 401 });
+  }
+  if (!(await isOwner())) {
+    return NextResponse.json({ error: "این کار فقط با حساب مدیر انجام می‌شود." }, { status: 403 });
   }
 
   let form: FormData;

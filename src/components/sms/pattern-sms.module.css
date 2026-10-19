@@ -18,7 +18,7 @@
   padding: 9px 14px;
   border-radius: 10px;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -49,7 +49,7 @@
 .description,
 .hint {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: 14px;
   color: #4f6b67;
 }
 
@@ -61,7 +61,7 @@
 .field span {
   display: block;
   margin-bottom: 4px;
-  font-size: 11px;
+  font-size: 13px;
   color: #4f6b67;
 }
 
@@ -73,7 +73,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 9px;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .preview {
@@ -86,13 +86,13 @@
 .preview span,
 .preview small {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   color: #4f6b67;
 }
 
 .preview p {
   margin: 6px 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
   white-space: pre-line;
 }
@@ -124,7 +124,7 @@
   margin: 10px 0 0;
   padding: 8px 10px;
   border-radius: 9px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .success {

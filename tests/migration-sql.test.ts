@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -120,6 +120,33 @@ test("a deposit can pay part of an invoice and undoing it reopens the invoice", 
     "second|22000000|true",
     "undo|7000000|false",
   ]);
+});
+
+test("a secretary works in the owner's sales data but not bank or settlement", { skip: !hasDb }, () => {
+  execFileSync("supabase/tests/harness/run.sh", ["fresh"], { stdio: "ignore" });
+  // Without ON_ERROR_STOP: the blocked settlement update must raise and be rolled back.
+  const result = spawnSync(
+    "psql",
+    ["-tA", "-d", "migtest_fresh", "-f", "supabase/tests/harness/team_access.sql"],
+    { encoding: "utf8" },
+  );
+  const rows = result.stdout.split("\n").map((line) => line.trim()).filter((line) => line.includes("|"));
+  assert.deepEqual(rows, [
+    "secretary_role|secretary",
+    "secretary_customers|1",
+    "secretary_invoices|1",
+    "secretary_bank|0",
+    "followup_owner|true|true",
+    "rpc_followups|2",
+    "secretary_settle_blocked|true",
+    "secretary_plain_update|ok",
+    "stranger_role|owner",
+    "stranger_customers|0",
+    "owner_bank|1",
+    "owner_settle|true",
+  ]);
+  assert.match(result.stderr, /only the owner can change invoice settlement/);
+  assert.equal(result.stderr.match(/ERROR/g)?.length, 1, "the settlement guard is the only error");
 });
 
 // --------------------------------------------------------------------------

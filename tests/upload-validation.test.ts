@@ -27,7 +27,9 @@ test("customer file mutations enforce validation and ownership on the server", (
   const client = readFileSync("src/app/customers/[id]/customer-files-manager.tsx", "utf8");
 
   assert.match(route, /validateMedicalDocument\(file, MAX_FILE_SIZE\)/);
-  assert.match(route, /\.eq\("owner_id", user\.id\)/);
+  // Rows and storage paths are scoped to the owner account, which a secretary shares.
+  assert.match(route, /\.eq\("owner_id", ownerId\)/);
+  assert.match(route, /getTeamContext\(\)/);
   assert.match(route, /safeOriginalFilename\(file\.name\)/);
   assert.match(route, /customer-files/);
   assert.doesNotMatch(client, /\.storage[\s\S]*\.upload\(/);

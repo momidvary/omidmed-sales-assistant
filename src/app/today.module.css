@@ -36,7 +36,7 @@
   padding: 6px 11px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -69,7 +69,7 @@
   align-items: center;
   gap: 7px;
   text-decoration: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
   white-space: nowrap;
 }
@@ -95,7 +95,7 @@
   margin-bottom: 15px;
   padding: 13px 16px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.8;
   font-weight: 750;
 }
@@ -136,7 +136,7 @@
 
 .statsGrid span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .statsGrid strong {
@@ -147,7 +147,7 @@
 
 .statsGrid small {
   color: #879692;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -176,12 +176,12 @@
 
 .progressCard > div:first-child span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .progressCard > div:first-child strong {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .progressTrack {
@@ -199,7 +199,7 @@
 
 .progressCard > b {
   color: var(--primary);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .workspace {
@@ -238,7 +238,7 @@
 
 .panelHeader span {
   color: var(--primary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -266,7 +266,7 @@
   color: #526b67;
   background: #eff4f3;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -319,7 +319,7 @@
 
 .score small {
   display: block;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 750;
 }
 
@@ -341,7 +341,7 @@
 .identity p {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .badges {
@@ -356,7 +356,7 @@
   border-radius: 999px;
   color: #526965;
   background: #eef4f3;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 850;
 }
 
@@ -412,12 +412,12 @@
 .meta span {
   margin-bottom: 4px;
   color: #788b87;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .meta strong {
   color: #344d49;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -435,7 +435,7 @@
   align-items: center;
   gap: 5px;
   color: #596f6b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .reason::before {
@@ -464,7 +464,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
   cursor: pointer;
 }
@@ -535,7 +535,7 @@
   max-width: 370px;
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.9;
 }
 
@@ -573,7 +573,7 @@
 
 .planRow span {
   color: #536b67;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .planRow strong {
@@ -593,7 +593,7 @@
   position: relative;
   padding-right: 20px;
   color: #5e7470;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.9;
   counter-increment: sales-step;
 }
@@ -610,7 +610,7 @@
   border-radius: 50%;
   color: #fff;
   background: var(--primary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -624,7 +624,7 @@
   color: #17675f;
   background: #eef7f5;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 850;
 }
 
@@ -635,7 +635,7 @@
 .muted {
   margin: 0;
   color: #7c8f8b;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.9;
 }
 
@@ -763,4 +763,65 @@
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+.taskGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.taskCard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 96px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  color: var(--text);
+  text-decoration: none;
+  box-shadow: var(--shadow-soft);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.taskCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.taskStep {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.taskCard div {
+  display: grid;
+  gap: 4px;
+}
+
+.taskCard strong {
+  font-size: 20px;
+}
+
+.taskCard div span {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.todaySales {
+  margin: 12px 4px 0;
+  color: var(--muted);
+  font-size: 14px;
 }

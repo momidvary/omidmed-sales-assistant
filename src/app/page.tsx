@@ -12,7 +12,11 @@ import {
   SINGLE_PURCHASE_FOLLOWUP_DAYS,
   type FollowupNeed,
 } from "@/lib/sales/followup-need";
+import { pendingCounts } from "./accounting/shared";
+import { loadUnsettledInvoices } from "./accounting/invoice-data";
+import { loadTodayTargets } from "./sms/today/load";
 import styles from "./today.module.css";
+import { getTeamContext } from "@/lib/team";
 import { tehranDateKey as sharedTehranDateKey } from "@/lib/finance/metrics";
 
 const number = new Intl.NumberFormat("fa-IR");
@@ -252,6 +256,20 @@ export default async function Home({
       .maybeSingle(),
   ]);
 
+  // Counts for the task cards. Bank work is only loaded for the owner.
+  const team = await getTeamContext();
+  const isOwnerUser = team?.role !== "secretary";
+  const [smsTargets, dueQuotes, bankCounts, unsettled] = await Promise.all([
+    loadTodayTargets(supabase),
+    supabase
+      .from("sales_opportunities")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["open", "on_hold"])
+      .lte("next_followup_at", new Date(`${todayKey}T23:59:59.999+03:30`).toISOString()),
+    isOwnerUser ? pendingCounts(supabase).catch(() => null) : Promise.resolve(null),
+    isOwnerUser ? loadUnsettledInvoices(supabase).catch(() => null) : Promise.resolve(null),
+  ]);
+
   const customers = customerResult.data;
   const followups = followupResult.data;
   const dailySales = dailySalesResult.data as DailySalesRow | null;
@@ -284,10 +302,6 @@ export default async function Home({
     return value && (!latest || value > latest) ? value : latest;
   }, null);
 
-  const totalDebt = customers
-    .filter((customer) => customer.holo_balance_status === "debtor")
-    .reduce((sum, customer) => sum + numeric(customer.holo_balance_amount), 0);
-
   const queryError =
     customerResult.error || followupResult.error || dailySalesResult.error;
 
@@ -301,8 +315,8 @@ export default async function Home({
   return (
     <AppShell
       active="home"
-      title="پیگیری مشتریان"
-      subtitle="مشتری‌ها بر اساس فاکتورهای قبلی‌شان در هلو به دو گروه تقسیم شده‌اند."
+      title="کارهای امروز"
+      subtitle="کارها را از بالا به پایین انجام دهید؛ هر کارت شما را به همان کار می‌برد."
     >
       {params.saved && savedMessages[params.saved] ? (
         <div className={styles.notice}>{savedMessages[params.saved]}</div>
@@ -316,37 +330,54 @@ export default async function Home({
         </div>
       ) : null}
 
-      <section className={styles.statsGrid}>
-        <article>
-          <span>نیاز به پیگیری</span>
-          <strong>{number.format(needsItems.length)}</strong>
-          <small>مشتری</small>
-        </article>
+      <section className={styles.taskGrid} aria-label="کارهای امروز">
+        <Link className={styles.taskCard} href="/sms/today">
+          <span className={styles.taskStep}>۱</span>
+          <div>
+            <strong>{number.format(smsTargets.items.length)} پیامک</strong>
+            <span>پیامک‌های امروز را بررسی و ارسال کنید</span>
+          </div>
+        </Link>
 
-        <article>
-          <span>نیاز به پیگیری ندارد</span>
-          <strong>{number.format(okItems.length)}</strong>
-          <small>مشتری</small>
-        </article>
+        <a className={styles.taskCard} href="#work-queue">
+          <span className={styles.taskStep}>۲</span>
+          <div>
+            <strong>{number.format(needsItems.length)} تماس</strong>
+            <span>
+              امروز {number.format(todayFollowups.length)} تماس ثبت شده؛ هدف {number.format(DAILY_TARGET)}
+            </span>
+          </div>
+        </a>
 
-        <article>
-          <span>تماس‌های ثبت‌شده امروز</span>
-          <strong>{number.format(todayFollowups.length)}</strong>
-          <small>از هدف روزانه {number.format(DAILY_TARGET)}</small>
-        </article>
+        <Link className={styles.taskCard} href="/quotes?view=due">
+          <span className={styles.taskStep}>۳</span>
+          <div>
+            <strong>{number.format(dueQuotes.count ?? 0)} قیمت</strong>
+            <span>پیگیری قیمت‌هایی که موعدشان رسیده</span>
+          </div>
+        </Link>
 
-        <article>
-          <span>فروش فاکتورشده امروز</span>
-          <strong>{number.format(numeric(dailySales?.invoice_count))}</strong>
-          <small>{formatMoney(dailySales?.invoiced_sales_amount)} تومان</small>
-        </article>
-
-        <article>
-          <span>مانده بدهکاران</span>
-          <strong className={styles.compactValue}>{formatMoney(totalDebt)}</strong>
-          <small>تومان طبق مانده حساب هلو</small>
-        </article>
+        {isOwnerUser ? (
+          <Link className={styles.taskCard} href="/accounting/deposits">
+            <span className={styles.taskStep}>۴</span>
+            <div>
+              <strong>
+                {number.format((bankCounts?.deposits ?? 0) + (bankCounts?.withdrawals ?? 0))} تراکنش بانکی
+              </strong>
+              <span>
+                {unsettled
+                  ? `${number.format(unsettled.open.length)} فاکتور بدون تسویه`
+                  : "صورت‌حساب بانک را بارگذاری کنید"}
+              </span>
+            </div>
+          </Link>
+        ) : null}
       </section>
+
+      <p className={styles.todaySales}>
+        فروش فاکتورشده امروز: {number.format(numeric(dailySales?.invoice_count))} فاکتور ·{" "}
+        {formatMoney(dailySales?.invoiced_sales_amount)} تومان
+      </p>
 
       <section className={styles.workspace} id="work-queue">
         <article className={styles.mainPanel}>
