@@ -129,13 +129,6 @@ export default async function AppShell({
             </div>
           ))}
         </nav>
-        <div className="sidebar-status">
-          <span className="status-dot" />
-          <div>
-            <strong>اتصال امن برقرار است</strong>
-            <p>{isSecretary ? "با حساب منشی وارد شده‌اید." : "اطلاعات فقط در حساب امیدمد ذخیره می‌شود."}</p>
-          </div>
-        </div>
       </aside>
 
       <section className="content">
