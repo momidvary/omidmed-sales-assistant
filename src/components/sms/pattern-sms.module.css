@@ -136,3 +136,33 @@
   color: #9b2c2c;
   background: #fdecec;
 }
+
+/* Compact: one button in a row of actions, the form floats below it. */
+.compact {
+  position: relative;
+  display: inline-block;
+}
+
+.compact .button {
+  min-height: 40px;
+}
+
+.compact .panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  inset-inline-start: 0;
+  width: min(420px, 86vw);
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.compact .success,
+.compact .error {
+  max-width: 320px;
+  margin-top: 6px;
+}
