@@ -4,6 +4,7 @@ import {
   draftSmsText,
   exclusionReason,
   rankSmsTargets,
+  rfmScores,
   salesThresholds,
   salesTrend,
   scoreSmsTarget,
@@ -152,6 +153,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
     failed: customers.error,
     trend: salesTrend(invoices.rows, now),
     timing,
+    rfm: invoices.error ? null : rfmScores(invoices.rows, now),
     products: topProducts(products.rows),
     lastContact: latestContactByCustomer(followups.rows),
     latestOutcome,
@@ -188,6 +190,7 @@ export async function loadTodayTargets(supabase: Supabase) {
         wantsPrice: askedPrice || data.openQuotes.has(customer.id),
         unpaidInvoice: data.unpaid.has(customer.id),
         timing: data.timing.has(customer.id) ? data.timing.get(customer.id) : undefined,
+        rfm: data.rfm?.get(customer.id) ?? null,
       },
       { ...thresholds, now },
     );

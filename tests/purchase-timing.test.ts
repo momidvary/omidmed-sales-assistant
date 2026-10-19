@@ -76,3 +76,23 @@ test("reasons say what the prediction is based on", () => {
     /۳۳ روز از آخرین خرید گذشته؛ معمولاً هر ۳۰ روز خرید می‌کند \(منظم\)/,
   );
 });
+
+test("shipping and other charges are never treated as products", async () => {
+  const { isServiceLine } = await import("../src/lib/products/service-lines");
+  for (const name of ["هزینه حمل", "هزينه ارسال", "کرایه باربری", "تخفیف", "بسته‌بندی", "هزینه پست"]) {
+    assert.ok(isServiceLine(name), name);
+  }
+  for (const name of ["ملحفه یکبار مصرف", "ژل سونوگرافی", "الکترود"]) {
+    assert.ok(!isServiceLine(name), name);
+  }
+  // Shipping on every invoice must not become the product "running out".
+  const items = [
+    { date: daysAgo(90), product: "هزینه حمل", quantity: 1 },
+    { date: daysAgo(60), product: "هزینه حمل", quantity: 1 },
+    { date: daysAgo(30), product: "هزینه حمل", quantity: 1 },
+    { date: daysAgo(90), product: "ملحفه", quantity: 10 },
+    { date: daysAgo(60), product: "ملحفه", quantity: 10 },
+    { date: daysAgo(30), product: "ملحفه", quantity: 10 },
+  ];
+  assert.equal(productRunOut(items)?.product, "ملحفه");
+});

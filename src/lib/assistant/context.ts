@@ -1,3 +1,4 @@
+import { isServiceLine } from "@/lib/products/service-lines";
 import {
   buildFollowupCandidates,
   type CustomerForFollowup,
@@ -212,7 +213,9 @@ export async function buildAssistantContext({
   const customers = (customerResult.data ?? []) as AssistantCustomer[];
   const followups = (followupResult.data ?? []) as FollowupForScoring[];
   const invoices = (invoiceResult.data ?? []) as InvoiceRow[];
-  const products = (productResult.data ?? []) as ProductRow[];
+  const products = ((productResult.data ?? []) as ProductRow[]).filter(
+    (product) => !isServiceLine(product.product_name),
+  );
   const tokens = meaningfulTokens(message);
   const candidates = buildFollowupCandidates({ customers, followups });
   const latestFollowups = latestByCustomer(followups);

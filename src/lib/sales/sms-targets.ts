@@ -6,6 +6,8 @@
 // data shows unpaid is mentioned, as a note, and never removes a customer.
 
 import { purchaseCycleDays, RECENT_CONTACT_DAYS } from "./followup-need";
+import { isServiceLine } from "@/lib/products/service-lines";
+
 import { timingReason, timingSignal, type NeedPrediction } from "./purchase-timing";
 
 export const DAILY_SMS_TARGETS = 20;
@@ -45,7 +47,61 @@ export type TargetSignals = {
   unpaidInvoice: boolean;
   /** Predicted need date from invoices and line items; summary fields otherwise. */
   timing?: NeedPrediction | null;
+  /** Frequency and order-value ranks over the last 12 months, if they bought. */
+  rfm?: RfmScore | null;
 };
+
+export type RfmScore = {
+  /** Purchase days in the last 12 months. */
+  purchases: number;
+  /** Average invoice amount in the last 12 months (toman). */
+  averageOrder: number;
+  /** 1-5 by fifths among customers who bought in the last 12 months. */
+  frequencyRank: number;
+  monetaryRank: number;
+};
+
+const RFM_WINDOW_DAYS = 365;
+
+/** 1-5: which fifth of the sorted values this one falls in. */
+function fifth(sorted: number[], value: number) {
+  let below = 0;
+  while (below < sorted.length && sorted[below] < value) below += 1;
+  return Math.min(5, 1 + Math.floor((below / sorted.length) * 5));
+}
+
+/**
+ * Frequency (purchase days) and monetary (average invoice) ranks over the
+ * last 12 months. Recency is covered by the purchase timing.
+ */
+export function rfmScores(
+  invoices: Array<{ customer_id: string; invoice_date: string; total_amount: number | string }>,
+  now: Date,
+) {
+  const stats = new Map<string, { days: Set<string>; total: number; count: number }>();
+  for (const invoice of invoices) {
+    const age = (now.getTime() - Date.parse(invoice.invoice_date)) / DAY_MS;
+    if (age < 0 || age >= RFM_WINDOW_DAYS) continue;
+    const entry = stats.get(invoice.customer_id) ?? { days: new Set<string>(), total: 0, count: 0 };
+    entry.days.add(invoice.invoice_date.slice(0, 10));
+    entry.total += numeric(invoice.total_amount);
+    entry.count += 1;
+    stats.set(invoice.customer_id, entry);
+  }
+  const frequencies = [...stats.values()].map((entry) => entry.days.size).sort((a, b) => a - b);
+  const averages = [...stats.values()].map((entry) => entry.total / entry.count).sort((a, b) => a - b);
+  const scores = new Map<string, RfmScore>();
+  for (const [customerId, entry] of stats) {
+    const averageOrder = entry.total / entry.count;
+    scores.set(customerId, {
+      purchases: entry.days.size,
+      averageOrder,
+      frequencyRank: fifth(frequencies, entry.days.size),
+      monetaryRank: fifth(averages, averageOrder),
+    });
+  }
+  return scores;
+}
 
 export type SmsTarget = {
   customer: TargetCustomer;
@@ -155,14 +211,36 @@ export function scoreSmsTarget(
   // Value alone never puts a customer on the list.
   if (!triggers.size) return null;
 
-  // 5) Customer value.
-  const totalSales = numeric(customer.total_sales);
-  if (totalSales > 0 && totalSales >= context.topTenSales) {
-    score += 20;
-    reasons.push("جزو ۱۰٪ مشتریان با بیشترین خرید است");
-  } else if (totalSales > 0 && totalSales >= context.topQuarterSales) {
-    score += 12;
-    reasons.push("جزو ۲۵٪ مشتریان با بیشترین خرید است");
+  // 5) Customer value: RFM over the last 12 months when the customer bought
+  // in that time, the lifetime total otherwise (a big past customer still
+  // matters for win-back).
+  const rfm = signals.rfm;
+  if (rfm) {
+    const points = (rank: number) => (rank >= 5 ? 10 : rank >= 4 ? 7 : rank >= 3 ? 4 : 0);
+    score += points(rfm.frequencyRank) + points(rfm.monetaryRank);
+    if (rfm.frequencyRank >= 4) {
+      reasons.push(
+        `در ۱۲ ماه اخیر ${persianNumber.format(rfm.purchases)} بار خرید کرده (جزو ${
+          rfm.frequencyRank >= 5 ? "۲۰" : "۴۰"
+        }٪ پرتکرار)`,
+      );
+    }
+    if (rfm.monetaryRank >= 4) {
+      reasons.push(
+        `میانگین هر سفارشش ${persianNumber.format(Math.round(rfm.averageOrder))} تومان است (جزو ${
+          rfm.monetaryRank >= 5 ? "۲۰" : "۴۰"
+        }٪ بالا)`,
+      );
+    }
+  } else {
+    const totalSales = numeric(customer.total_sales);
+    if (totalSales > 0 && totalSales >= context.topTenSales) {
+      score += 20;
+      reasons.push("جزو ۱۰٪ مشتریان با بیشترین خرید است");
+    } else if (totalSales > 0 && totalSales >= context.topQuarterSales) {
+      score += 12;
+      reasons.push("جزو ۲۵٪ مشتریان با بیشترین خرید است");
+    }
   }
   if (customer.priority === "vip") score += 15;
   else if (customer.priority === "high") score += 10;
@@ -219,7 +297,7 @@ export function topProducts(
   const best = new Map<string, { name: string; count: number; last: string }>();
   for (const row of rows) {
     const name = String(row.product_name ?? "").replace(/\s+/g, " ").trim();
-    if (!name) continue;
+    if (!name || isServiceLine(name)) continue;
     const count = numeric(row.invoice_count);
     const last = row.last_purchase_at ?? "";
     const current = best.get(row.customer_id);
