@@ -33,6 +33,8 @@ type Props = {
   phone: string | null;
   invoices: PatternInvoice[];
   patterns: PatternOption[];
+  /** Inline button with a floating panel, for rows of a list. */
+  compact?: boolean;
 };
 
 const CONTACT_STORAGE_KEY = "omidmed.poster.phones";
@@ -49,7 +51,14 @@ function fill(text: string, args: string[]) {
   return text.replace(/\{(\d+)\}/g, (_, index: string) => args[Number(index)] || "…");
 }
 
-export default function PatternSmsButtons({ customerId, customerName, phone, invoices, patterns }: Props) {
+export default function PatternSmsButtons({
+  customerId,
+  customerName,
+  phone,
+  invoices,
+  patterns,
+  compact = false,
+}: Props) {
   const [active, setActive] = useState<PatternOption | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -57,6 +66,7 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
   const requestId = useRef<string | null>(null);
 
   if (!patterns.length) {
+    if (compact) return null;
     return (
       <p className={styles.hint}>
         پیامک الگویی (خط خدماتی) هنوز فعال نیست. کد الگوهای تأییدشده ملی پیامک را در Vercel تعریف کنید.
@@ -137,7 +147,7 @@ export default function PatternSmsButtons({ customerId, customerName, phone, inv
       : undefined;
 
   return (
-    <div className={styles.wrap}>
+    <div className={compact ? styles.compact : styles.wrap}>
       <div className={styles.buttons}>
         {patterns.map((pattern) => (
           <button

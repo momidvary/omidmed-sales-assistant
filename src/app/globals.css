@@ -840,7 +840,7 @@ main small {
 
 .nav-group {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .nav-group + .nav-group {
@@ -857,7 +857,7 @@ main small {
 }
 
 .nav-group .nav-item {
-  min-height: 42px;
+  min-height: 38px;
 }
 
 @media (max-width: 780px) {

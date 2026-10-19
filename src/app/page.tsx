@@ -3,7 +3,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import AppShell, { Icon } from "@/components/app-shell";
+import PatternSmsButtons from "@/components/sms/pattern-sms-buttons";
 import SingleSmsComposer from "@/components/sms/single-sms-composer";
+import { configuredPatterns } from "@/lib/sms/patterns";
 import { createClient } from "@/lib/supabase/server";
 import {
   classifyFollowupNeed,
@@ -275,6 +277,10 @@ export default async function Home({
   const dailySales = dailySalesResult.data as DailySalesRow | null;
   const lastContact = latestContactByCustomer(followups);
 
+  const reorderPattern = configuredPatterns()
+    .filter((pattern) => pattern.key === "followup")
+    .map(({ key, button, description, text, variables }) => ({ key, button, description, text, variables }));
+
   const items: WorkspaceItem[] = customers.map((customer) => ({
     customer,
     need: classifyFollowupNeed(customer, lastContact.get(customer.id) ?? null),
@@ -474,6 +480,16 @@ export default async function Home({
                         phone={customer.phone}
                         source="customer"
                         defaultText={defaultSmsText(customer)}
+                        compact
+                      />
+
+                      {/* The approved reorder pattern: service line, reaches every number. */}
+                      <PatternSmsButtons
+                        customerId={customer.id}
+                        customerName={customer.name}
+                        phone={customer.phone}
+                        invoices={[]}
+                        patterns={reorderPattern}
                         compact
                       />
 

@@ -171,12 +171,12 @@
 
 .tableWrap table {
   width: 100%;
-  min-width: 1050px;
+  min-width: 900px;
   border-collapse: collapse;
 }
 
 .tableWrap th {
-  padding: 16px 18px;
+  padding: 14px 12px;
   color: #536a66;
   background: #f4f8f7;
   text-align: right;
@@ -186,7 +186,7 @@
 }
 
 .tableWrap td {
-  padding: 17px 18px;
+  padding: 14px 12px;
   border-top: 1px solid #edf2f1;
   font-size: 14px;
   line-height: 1.7;
@@ -207,13 +207,17 @@
   font-size: 14px;
 }
 
+/* Long notes (e.g. the follow-up reason) wrap to two lines instead of
+   pushing the actions column out of view. */
 .tableWrap td small {
-  max-width: 340px;
+  max-width: 260px;
   color: #7f918d;
   font-size: 13px;
-  white-space: nowrap;
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .customerName {
