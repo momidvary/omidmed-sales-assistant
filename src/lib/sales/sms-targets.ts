@@ -6,6 +6,7 @@
 // data shows unpaid is mentioned, as a note, and never removes a customer.
 
 import { purchaseCycleDays, RECENT_CONTACT_DAYS } from "./followup-need";
+import { timingReason, timingSignal, type NeedPrediction } from "./purchase-timing";
 
 export const DAILY_SMS_TARGETS = 20;
 /** A customer gets at most one SMS in this many days. */
@@ -42,6 +43,8 @@ export type TargetSignals = {
   wantsPrice: boolean;
   /** An invoice the bank data shows unpaid (note only). */
   unpaidInvoice: boolean;
+  /** Predicted need date from invoices and line items; summary fields otherwise. */
+  timing?: NeedPrediction | null;
 };
 
 export type SmsTarget = {
@@ -87,6 +90,23 @@ export function exclusionReason(
   return null;
 }
 
+/** Timing from the summary view when invoice details were not loaded. */
+function summaryTiming(customer: TargetCustomer): NeedPrediction | null {
+  const purchases = Math.round(numeric(customer.purchase_count));
+  if (!purchases || customer.days_since_last_purchase == null) return null;
+  const intervalDays = purchaseCycleDays(customer);
+  const daysSinceLast = Math.round(numeric(customer.days_since_last_purchase));
+  return {
+    basis: purchases >= 2 ? "cycle" : "single",
+    intervalDays,
+    progress: daysSinceLast / intervalDays,
+    daysSinceLast,
+    daysToDue: intervalDays - daysSinceLast,
+    regular: false,
+    product: null,
+  };
+}
+
 export function scoreSmsTarget(
   customer: TargetCustomer,
   signals: TargetSignals,
@@ -97,31 +117,17 @@ export function scoreSmsTarget(
   let score = 0;
   const triggers = new Set<TargetKind>();
 
-  const purchases = Math.round(numeric(customer.purchase_count));
-  const sinceLast = customer.days_since_last_purchase == null ? null : numeric(customer.days_since_last_purchase);
-  const cycle = purchaseCycleDays(customer);
-  const reliableCycle = purchases >= 2;
-
-  // 1) Purchase cycle.
-  if (purchases > 0 && sinceLast !== null) {
-    const ratio = sinceLast / cycle;
-    const cycleText = reliableCycle
-      ? `معمولاً هر ${persianNumber.format(cycle)} روز خرید می‌کند`
-      : "فقط یک خرید داشته";
-    const weight = reliableCycle ? 1 : 0.6;
-    if (ratio >= 2 && reliableCycle) {
-      score += 30 * weight;
-      triggers.add("winback");
-      reasons.push(`${persianNumber.format(sinceLast)} روز است خرید نکرده؛ بیش از دو برابر حالت معمول (${cycleText})`);
-    } else if (ratio >= 1) {
-      score += (ratio >= 1.5 ? 35 : 30) * weight;
-      triggers.add("reorder");
-      reasons.push(`${persianNumber.format(sinceLast)} روز از آخرین خرید گذشته؛ ${cycleText}`);
-    } else if (ratio >= 0.9) {
-      score += 20 * weight;
-      triggers.add("reorder");
-      reasons.push(`به موعد خرید بعدی نزدیک است؛ ${cycleText}`);
-    }
+  // 1) Timing: just before the predicted need is the best moment.
+  const timing = signals.timing === undefined ? summaryTiming(customer) : signals.timing;
+  const timed = timing ? timingSignal(timing) : null;
+  if (timing && timed) {
+    score += timed.points;
+    triggers.add(timed.kind);
+    reasons.push(
+      timed.kind === "winback"
+        ? `${timingReason(timing)}؛ بیش از دو برابر حالت معمول خرید نکرده`
+        : timingReason(timing),
+    );
   }
 
   // 2) Trend: buying clearly less than six months before.
@@ -170,7 +176,8 @@ export function scoreSmsTarget(
     kind,
     score: Math.round(score),
     reasons,
-    topProduct: signals.topProduct,
+    // The product about to run out is the best thing to name in the message.
+    topProduct: timing?.product ?? signals.topProduct,
     note: signals.unpaidInvoice ? "طبق اطلاعات بانک یک فاکتور تسویه‌نشده دارد" : null,
   };
 }

@@ -10,10 +10,10 @@ import {
   SMS_COOLDOWN_DAYS,
   TARGET_KIND_LABELS,
   topProducts,
-  trendSince,
   type TargetCustomer,
 } from "@/lib/sales/sms-targets";
 import { normalizeIranMobile } from "@/lib/sms/melipayamak";
+import { predictNeed, type ItemPurchase, type NeedPrediction } from "@/lib/sales/purchase-timing";
 import { configuredPatterns } from "@/lib/sms/patterns";
 import type { createClient } from "@/lib/supabase/server";
 
@@ -40,7 +40,7 @@ async function readAll<T>(query: (from: number, to: number) => PromiseLike<{ dat
 
 async function loadSignals(supabase: Supabase, now: Date) {
   const since = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
-  const [customers, invoices, products, followups, sms, quotes, unsettled] = await Promise.all([
+  const [customers, invoices, invoiceItems, products, followups, sms, quotes, unsettled] = await Promise.all([
     readAll<TargetCustomer & { last_purchase_at: string | null }>((from, to) =>
       supabase
         .from("customer_crm_summary")
@@ -50,12 +50,19 @@ async function loadSignals(supabase: Supabase, now: Date) {
         .order("id")
         .range(from, to),
     ),
-    readAll<{ customer_id: string; invoice_date: string; total_amount: number | string }>((from, to) =>
+    // All invoices: purchase cycles and run-out dates need the full history.
+    readAll<{ id: string; customer_id: string; invoice_date: string; total_amount: number | string }>((from, to) =>
       supabase
         .from("invoices")
-        .select("customer_id,invoice_date,total_amount")
-        .gte("invoice_date", trendSince(now))
+        .select("id,customer_id,invoice_date,total_amount")
         .or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
+        .order("id")
+        .range(from, to),
+    ),
+    readAll<{ invoice_id: string; product_name: string | null; quantity: number | string | null }>((from, to) =>
+      supabase
+        .from("invoice_items")
+        .select("invoice_id,product_name,quantity")
         .order("id")
         .range(from, to),
     ),
@@ -111,10 +118,40 @@ async function loadSignals(supabase: Supabase, now: Date) {
     if (!latestOutcome.has(row.customer_id)) latestOutcome.set(row.customer_id, { at: row.followup_at, outcome: row.outcome });
   }
 
+  // Per customer: purchase dates and dated line items for the timing model.
+  const invoiceById = new Map(invoices.rows.map((invoice) => [invoice.id, invoice]));
+  const datesByCustomer = new Map<string, string[]>();
+  for (const invoice of invoices.rows) {
+    datesByCustomer.set(invoice.customer_id, [...(datesByCustomer.get(invoice.customer_id) ?? []), invoice.invoice_date]);
+  }
+  const itemsByCustomer = new Map<string, ItemPurchase[]>();
+  for (const item of invoiceItems.rows) {
+    const invoice = invoiceById.get(item.invoice_id);
+    if (!invoice || !item.product_name) continue;
+    const list = itemsByCustomer.get(invoice.customer_id) ?? [];
+    list.push({ date: invoice.invoice_date, product: item.product_name, quantity: Number(item.quantity ?? 0) });
+    itemsByCustomer.set(invoice.customer_id, list);
+  }
+  const timing = new Map<string, NeedPrediction | null>();
+  // Without the invoice history the scorer falls back to the summary view.
+  if (!invoices.error) {
+    for (const customer of customers.rows) {
+      timing.set(
+        customer.id,
+        predictNeed({
+          invoiceDates: datesByCustomer.get(customer.id) ?? [],
+          items: invoiceItems.error ? [] : itemsByCustomer.get(customer.id) ?? [],
+          now,
+        }),
+      );
+    }
+  }
+
   return {
     customers: customers.rows,
     failed: customers.error,
     trend: salesTrend(invoices.rows, now),
+    timing,
     products: topProducts(products.rows),
     lastContact: latestContactByCustomer(followups.rows),
     latestOutcome,
@@ -130,22 +167,19 @@ export async function loadTodayTargets(supabase: Supabase) {
   const thresholds = salesThresholds(data.customers);
 
   const skipped: Record<string, number> = {};
-  const scored = data.customers.map((customer) => {
+  // Every customer is scored (the call list uses it); exclusions only keep
+  // someone off today's SMS list.
+  const ranked = data.customers.map((customer) => {
     const signals = {
       lastSmsAt: data.lastSms.get(customer.id) ?? null,
       lastContactAt: data.lastContact.get(customer.id) ?? null,
     };
-    const excluded = exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now);
-    if (excluded) {
-      skipped[excluded] = (skipped[excluded] ?? 0) + 1;
-      return null;
-    }
     const outcome = data.latestOutcome.get(customer.id);
     const askedPrice =
       outcome?.outcome === "requested_price" &&
       (!customer.last_purchase_at || outcome.at.slice(0, 10) > customer.last_purchase_at);
     const trend = data.trend.get(customer.id) ?? { recentSales: 0, previousSales: 0 };
-    return scoreSmsTarget(
+    const target = scoreSmsTarget(
       customer,
       {
         ...signals,
@@ -153,9 +187,26 @@ export async function loadTodayTargets(supabase: Supabase) {
         topProduct: data.products.get(customer.id) ?? null,
         wantsPrice: askedPrice || data.openQuotes.has(customer.id),
         unpaidInvoice: data.unpaid.has(customer.id),
+        timing: data.timing.has(customer.id) ? data.timing.get(customer.id) : undefined,
       },
       { ...thresholds, now },
     );
+    const excluded = exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now);
+    return { target, excluded };
+  });
+
+  const scoreById = new Map(
+    ranked
+      .filter((entry) => entry.target)
+      .map((entry) => [
+        entry.target!.customer.id,
+        { score: entry.target!.score, reasons: entry.target!.reasons, kindLabel: TARGET_KIND_LABELS[entry.target!.kind] },
+      ]),
+  );
+  const scored = ranked.map(({ target, excluded }) => {
+    if (!excluded) return target;
+    skipped[excluded] = (skipped[excluded] ?? 0) + 1;
+    return null;
   });
 
   const candidates = scored.filter(Boolean).length;
@@ -176,5 +227,5 @@ export async function loadTodayTargets(supabase: Supabase) {
     patternAllowed: reorderPattern && (target.kind === "reorder" || target.kind === "winback"),
   }));
 
-  return { items, candidates, skipped, failed: data.failed };
+  return { items, candidates, skipped, failed: data.failed, scoreById };
 }
