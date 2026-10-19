@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isServiceLine } from "@/lib/products/service-lines";
 import { createClient } from "@/lib/supabase/server";
 import {
   AiConfigError,
@@ -320,7 +321,9 @@ async function buildCustomerContext(
 
   return {
     customer: customerResult.data as CustomerSummaryRow,
-    top_products: (productsResult.data ?? []) as ProductSummaryRow[],
+    top_products: ((productsResult.data ?? []) as ProductSummaryRow[]).filter(
+      (product) => !isServiceLine(product.product_name),
+    ),
     recent_invoices: (invoicesResult.data ?? []) as InvoiceRow[],
     recent_followups: (followupsResult.data ?? []) as FollowupRow[],
   };

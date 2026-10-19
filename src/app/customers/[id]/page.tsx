@@ -6,6 +6,7 @@ import AppShell, { Icon } from "@/components/app-shell";
 import SingleSmsComposer from "@/components/sms/single-sms-composer";
 import PatternSmsButtons from "@/components/sms/pattern-sms-buttons";
 import { configuredPatterns, patternItemsSummary } from "@/lib/sms/patterns";
+import { isServiceLine } from "@/lib/products/service-lines";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCurrentJalaliDate,
@@ -591,7 +592,10 @@ export default async function CustomerPage({
   ) as OpportunityRow[];
   const invoices = invoicesResult.data ?? [];
   const sales = salesResult.data ?? [];
-  const productSummary = productSummaryResult.data ?? [];
+  // Shipping and other charges are invoice lines, not products.
+  const productSummary = (productSummaryResult.data ?? []).filter(
+    (product) => !isServiceLine(String(product.product_name ?? "")),
+  );
 
   // A panel that returns exactly its cap is almost certainly incomplete. Say so
   // rather than presenting a truncated history as the customer's full record.

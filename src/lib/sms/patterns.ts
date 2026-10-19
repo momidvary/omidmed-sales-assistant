@@ -7,6 +7,8 @@
 // approves a slightly different wording, only the in-app preview differs:
 // the message actually delivered is always the approved one.
 
+import { isServiceLine } from "@/lib/products/service-lines";
+
 export type PatternKey = "order" | "payment" | "production" | "shipped" | "followup";
 
 /** Where the profile page pre-fills a variable from. */
@@ -161,7 +163,8 @@ export function patternItemsSummary(
 ) {
   const number = new Intl.NumberFormat("fa-IR");
   const parts = items
-    .filter((item) => String(item.product_name ?? "").trim())
+    // Shipping and other charges are not part of what was ordered.
+    .filter((item) => String(item.product_name ?? "").trim() && !isServiceLine(String(item.product_name)))
     .map((item) => {
       const quantity = Number(item.quantity ?? 0);
       const name = String(item.product_name).replace(/\s+/g, " ").trim();

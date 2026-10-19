@@ -1,5 +1,6 @@
 import Link from "next/link";
 import AppShell from "@/components/app-shell";
+import { isServiceLine } from "@/lib/products/service-lines";
 import { createClient } from "@/lib/supabase/server";
 import {
   fetchAllCustomers,
@@ -142,7 +143,7 @@ export default async function ReportsPage({
 
   const productTotals = new Map<string, { amount: number; quantity: number }>();
   for (const item of items) {
-    if (!invoiceMap.has(item.invoice_id)) continue;
+    if (!invoiceMap.has(item.invoice_id) || isServiceLine(item.product_name)) continue;
     const current = productTotals.get(item.product_name) ?? {
       amount: 0,
       quantity: 0,

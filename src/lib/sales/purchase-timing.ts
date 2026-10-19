@@ -7,6 +7,8 @@
 // - purchase cycle: the median gap between purchase days, which one unusual
 //   gap does not distort the way an average does.
 
+import { isServiceLine } from "@/lib/products/service-lines";
+
 const DAY_MS = 86_400_000;
 const MIN_INTERVAL_DAYS = 7;
 const MAX_INTERVAL_DAYS = 365;
@@ -73,7 +75,7 @@ export function productRunOut(items: ItemPurchase[]) {
   const byProduct = new Map<string, Map<number, number>>();
   for (const item of items) {
     const name = item.product.replace(/\s+/g, " ").trim();
-    if (!name || !(item.quantity > 0)) continue;
+    if (!name || !(item.quantity > 0) || isServiceLine(name)) continue;
     const days = byProduct.get(name) ?? new Map<number, number>();
     const day = dayIndex(item.date);
     days.set(day, (days.get(day) ?? 0) + item.quantity);

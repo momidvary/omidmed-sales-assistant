@@ -108,3 +108,34 @@ test("helpers: thresholds, six-month trend, favourite product, draft text", () =
   assert.match(draft, /^کلینیک نمونه گرامی، .*ملحفه.*\{contact\}/);
   assert.doesNotMatch(draft, /https?:/);
 });
+
+test("RFM ranks frequency and order value over the last 12 months", async () => {
+  const { rfmScores } = await import("../src/lib/sales/sms-targets");
+  const invoices = [
+    // c1: 6 purchases a year, big orders.
+    ...Array.from({ length: 6 }, (_, i) => ({ customer_id: "c1", invoice_date: daysAgo(30 + i * 50).slice(0, 10), total_amount: 40_000_000 })),
+    // c2: 2 small purchases.
+    { customer_id: "c2", invoice_date: daysAgo(20).slice(0, 10), total_amount: 2_000_000 },
+    { customer_id: "c2", invoice_date: daysAgo(200).slice(0, 10), total_amount: 2_000_000 },
+    // Ten typical customers: 3 purchases of 10m each.
+    ...Array.from({ length: 30 }, (_, i) => ({
+      customer_id: `f${i % 10}`,
+      invoice_date: daysAgo(10 + i * 9).slice(0, 10),
+      total_amount: 10_000_000,
+    })),
+    // c3: older than 12 months only.
+    { customer_id: "c3", invoice_date: daysAgo(500).slice(0, 10), total_amount: 90_000_000 },
+  ];
+  const scores = rfmScores(invoices, now);
+  assert.equal(scores.get("c1")?.purchases, 6);
+  assert.equal(scores.get("c1")?.frequencyRank, 5);
+  assert.equal(scores.get("c1")?.monetaryRank, 5);
+  assert.equal(scores.get("c2")?.frequencyRank, 1);
+  assert.equal(scores.has("c3"), false, "no purchase in 12 months: falls back to lifetime value");
+
+  const due = { ...base, days_since_last_purchase: 36 };
+  const strong = scoreSmsTarget(due, { ...quiet, rfm: scores.get("c1") }, context)!;
+  const weak = scoreSmsTarget(due, { ...quiet, rfm: scores.get("c2") }, context)!;
+  assert.ok(strong.score > weak.score);
+  assert.ok(strong.reasons.some((reason) => reason.includes("۶ بار خرید")));
+});
