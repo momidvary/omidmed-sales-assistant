@@ -3,17 +3,23 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import AppShell, { Icon } from "@/components/app-shell";
+import AutoDeliveryRefresh from "@/components/sms/auto-delivery-refresh";
 import PatternSmsButtons from "@/components/sms/pattern-sms-buttons";
 import SingleSmsComposer from "@/components/sms/single-sms-composer";
 import { configuredPatterns } from "@/lib/sms/patterns";
 import { createClient } from "@/lib/supabase/server";
 import {
-  classifyFollowupNeed,
+  CALL_KIND_LABELS,
+  CALL_SMS_WINDOW_DAYS,
+  callNeed,
+  NO_REPLY_DAYS,
+  type CallNeed,
+} from "@/lib/sales/call-list";
+import {
   latestContactByCustomer,
   RECENT_CONTACT_DAYS,
-  SINGLE_PURCHASE_FOLLOWUP_DAYS,
-  type FollowupNeed,
 } from "@/lib/sales/followup-need";
+import { normalizeIranMobile } from "@/lib/sms/melipayamak";
 import { pendingCounts } from "./accounting/shared";
 import { loadUnsettledInvoices } from "./accounting/invoice-data";
 import { loadTodayTargets } from "./sms/today/load";
@@ -59,6 +65,7 @@ type FollowupRow = {
   customer_id: string;
   followup_at: string;
   outcome: string;
+  channel: string | null;
   potential_value: number | string | null;
 };
 
@@ -70,7 +77,7 @@ type DailySalesRow = {
 
 type WorkspaceItem = {
   customer: WorkspaceCustomer;
-  need: FollowupNeed;
+  call: CallNeed | null;
 };
 
 const savedMessages: Record<string, string> = {
@@ -250,7 +257,7 @@ export default async function Home({
     collectAllRows<FollowupRow>((from, to) =>
       supabase
         .from("followups")
-        .select("customer_id,followup_at,outcome,potential_value")
+        .select("customer_id,followup_at,outcome,potential_value,channel")
         .order("followup_at", { ascending: false })
         .order("id")
         .range(from, to) as unknown as Promise<{ data: FollowupRow[] | null; error: { message: string } | null }>,
@@ -291,26 +298,43 @@ export default async function Home({
   const todaySales = dailyRows.find((row) => row.invoice_date === todayKey);
   const yesterdaySales = dailyRows.find((row) => row.invoice_date === yesterdayKey);
   const lastSyncAt = (lastSync?.data as { completed_at: string | null } | null)?.completed_at ?? null;
-  const lastContact = latestContactByCustomer(followups);
+  // An accepted SMS also logs a follow-up row; only real contacts count here.
+  const contacts = followups.filter((item) => item.channel !== "sms");
+  const lastContact = latestContactByCustomer(contacts);
+  const now = new Date();
 
   const reorderPattern = configuredPatterns()
     .filter((pattern) => pattern.key === "followup")
     .map(({ key, button, description, text, variables }) => ({ key, button, description, text, variables }));
 
+  // SMS first: only customers a message cannot cover are called (a date you
+  // set, an SMS that did not reach them, no mobile, or a valuable customer
+  // who did not respond to one).
   const items: WorkspaceItem[] = customers.map((customer) => ({
     customer,
-    need: classifyFollowupNeed(customer, lastContact.get(customer.id) ?? null),
+    call: callNeed({
+      customer,
+      hasMobile: Boolean(normalizeIranMobile(customer.phone)),
+      smsReason: smsTargets.scoreById.get(customer.id)?.reasons[0] ?? null,
+      lastSms: smsTargets.lastSms.get(customer.id) ?? null,
+      lastContactAt: lastContact.get(customer.id) ?? null,
+      highValue: smsTargets.highValue.has(customer.id),
+      now,
+    }),
   }));
   const byValue = (a: WorkspaceItem, b: WorkspaceItem) =>
     numeric(b.customer.total_sales) - numeric(a.customer.total_sales);
-  // Calls follow the same score as today's SMS (timing, trend, quotes,
-  // value); customers without a number go last so the number gets added.
   const hasPhone = (item: WorkspaceItem) => Boolean(item.customer.phone?.trim());
   const scoreOf = (item: WorkspaceItem) => smsTargets.scoreById.get(item.customer.id)?.score ?? 0;
+  // Kind first (your dates, then failed SMS, then no mobile, then no reply),
+  // then the same score as today's SMS; customers without any number last.
   const byPriority = (a: WorkspaceItem, b: WorkspaceItem) =>
-    Number(hasPhone(b)) - Number(hasPhone(a)) || scoreOf(b) - scoreOf(a) || byValue(a, b);
-  const needsItems = items.filter((item) => item.need.needsFollowup).sort(byPriority);
-  const okItems = items.filter((item) => !item.need.needsFollowup).sort(byValue);
+    (a.call?.rank ?? 9) - (b.call?.rank ?? 9) ||
+    Number(hasPhone(b)) - Number(hasPhone(a)) ||
+    scoreOf(b) - scoreOf(a) ||
+    byValue(a, b);
+  const needsItems = items.filter((item) => item.call).sort(byPriority);
+  const okItems = items.filter((item) => !item.call).sort(byValue);
   const listItems = view === "ok" ? okItems : needsItems;
 
   const pageSize = 50;
@@ -320,7 +344,7 @@ export default async function Home({
 
   const todayStart = new Date(`${todayKey}T00:00:00+03:30`).getTime();
   const todayEnd = new Date(`${todayKey}T23:59:59.999+03:30`).getTime();
-  const todayFollowups = followups.filter((item) => {
+  const todayFollowups = contacts.filter((item) => {
     const value = new Date(item.followup_at).getTime();
     return value >= todayStart && value <= todayEnd;
   });
@@ -357,6 +381,8 @@ export default async function Home({
           خواندن اطلاعات فروش کامل نشد. دوباره تلاش کنید؛ شناسه خطا: DASHBOARD_READ_FAILED
         </div>
       ) : null}
+
+      <AutoDeliveryRefresh />
 
       <section className={styles.taskGrid} aria-label="کارهای امروز">
         <Link className={styles.taskCard} href="/sms/today">
@@ -428,8 +454,8 @@ export default async function Home({
         <article className={styles.mainPanel}>
           <header className={styles.panelHeader}>
             <div>
-              <span>مرتب‌شده از بیشترین خرید قبلی</span>
-              <h3>{view === "ok" ? "مشتریانی که فعلاً نیاز به پیگیری ندارند" : "مشتریانی که باید پیگیری شوند"}</h3>
+              <span>پیامک اول؛ تماس فقط وقتی پیامک کار نمی‌کند</span>
+              <h3>{view === "ok" ? "مشتریانی که فعلاً تماس لازم ندارند" : "مشتریانی که باید با آن‌ها تماس بگیرید"}</h3>
             </div>
 
             <span className={styles.resultCount}>
@@ -439,8 +465,8 @@ export default async function Home({
 
           <nav className={styles.tabs}>
             {[
-              ["needs", `نیاز به پیگیری (${number.format(needsItems.length)})`],
-              ["ok", `نیاز به پیگیری ندارد (${number.format(okItems.length)})`],
+              ["needs", `تماس لازم (${number.format(needsItems.length)})`],
+              ["ok", `تماس لازم نیست (${number.format(okItems.length)})`],
             ].map(([key, label]) => (
               <Link
                 key={key}
@@ -454,7 +480,7 @@ export default async function Home({
 
           {visibleItems.length ? (
             <div className={styles.list}>
-              {visibleItems.map(({ customer, need }) => {
+              {visibleItems.map(({ customer, call }) => {
                 const phoneLink = normalizePhoneForLink(customer.phone);
                 const daysSince = customer.days_since_last_purchase;
 
@@ -472,12 +498,8 @@ export default async function Home({
                       </div>
 
                       <div className={styles.badges}>
-                        <span
-                          className={`${styles.badge} ${
-                            need.needsFollowup ? styles.badgeUrgent : styles.badgeDue
-                          }`}
-                        >
-                          {need.needsFollowup ? "نیاز به پیگیری" : "فعلاً نیاز ندارد"}
+                        <span className={`${styles.badge} ${call ? styles.badgeUrgent : styles.badgeDue}`}>
+                          {call ? CALL_KIND_LABELS[call.kind] : "فعلاً تماس لازم نیست"}
                         </span>
                       </div>
                     </div>
@@ -502,7 +524,14 @@ export default async function Home({
                     </div>
 
                     <div className={styles.reasons}>
-                      {(smsTargets.scoreById.get(customer.id)?.reasons ?? [need.reason]).slice(0, 3).map((reason) => (
+                      {[
+                        ...(call ? [call.reason] : []),
+                        ...(smsTargets.scoreById.get(customer.id)?.reasons ?? []).filter(
+                          (reason) => !call?.reason.includes(reason),
+                        ),
+                      ]
+                        .slice(0, 3)
+                        .map((reason) => (
                         <span className={styles.reason} key={reason}>
                           {reason}
                         </span>
@@ -568,7 +597,7 @@ export default async function Home({
                 <Icon name="check" size={29} />
               </div>
               <h4>
-                {view === "ok" ? "مشتری‌ای در این گروه نیست" : "فعلاً مشتری‌ای نیاز به پیگیری ندارد"}
+                {view === "ok" ? "مشتری‌ای در این گروه نیست" : "امروز تماسی لازم نیست؛ پیامک‌های امروز را بفرستید"}
               </h4>
             </div>
           )}
@@ -586,10 +615,12 @@ export default async function Home({
           <section className={styles.sideSection}>
             <h3>قانون تقسیم‌بندی</h3>
             <ol className={styles.tipList}>
-              <li>اگر خودتان تاریخ پیگیری گذاشته‌اید و آن تاریخ رسیده، نیاز به پیگیری دارد.</li>
-              <li>مشتری با چند خرید: وقتی از آخرین خریدش به اندازه فاصله معمول خریدهایش گذشته باشد.</li>
-              <li>مشتری با یک خرید: وقتی {number.format(SINGLE_PURCHASE_FOLLOWUP_DAYS)} روز از خریدش گذشته باشد.</li>
-              <li>هر تماسی که ثبت کنید، مشتری را تا {number.format(RECENT_CONTACT_DAYS)} روز (یا تا تاریخ پیگیری بعدی) از این فهرست خارج می‌کند.</li>
+              <li>راه اصلی پیامک است؛ تماس فقط برای مشتری‌هایی که پیامک به کارشان نمی‌آید.</li>
+              <li>تاریخ پیگیری‌ای که خودتان گذاشته‌اید و رسیده.</li>
+              <li>پیامکی که در {number.format(CALL_SMS_WINDOW_DAYS)} روز اخیر فرستاده شده و نرسیده (اگر شماره تبلیغات را بسته، اول الگو را امتحان کنید).</li>
+              <li>مشتری‌ای که امروز دلیل پیام دارد ولی موبایل ثبت‌شده ندارد.</li>
+              <li>مشتری پرارزشی که {number.format(NO_REPLY_DAYS)} روز پیش پیامک گرفته و بعد از آن خرید یا تماسی ثبت نشده.</li>
+              <li>هر تماسی که ثبت کنید، مشتری را تا {number.format(RECENT_CONTACT_DAYS)} روز از این فهرست خارج می‌کند؛ خرید بعد از پیامک هم یعنی جواب داده.</li>
             </ol>
           </section>
 

@@ -44,7 +44,10 @@ export default function SingleSmsComposer({
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(initialText);
   const [manualMobile, setManualMobile] = useState(phone || "");
-  const [scheduleFollowup, setScheduleFollowup] = useState(true);
+  // SMS comes first; a call is only scheduled when asked for. Customers
+  // the SMS did not reach, or valuable ones who did not respond, reach the
+  // call list on their own.
+  const [scheduleFollowup, setScheduleFollowup] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
