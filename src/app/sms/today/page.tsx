@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import AppShell from "@/components/app-shell";
-import { SMS_COOLDOWN_DAYS } from "@/lib/sales/sms-targets";
+import { DAILY_SMS_TARGETS, SMS_COOLDOWN_DAYS } from "@/lib/sales/sms-targets";
 import { createClient } from "@/lib/supabase/server";
 
 import styles from "../sms.module.css";
@@ -11,9 +11,20 @@ import TodaySmsList from "./today-sms-list";
 
 const number = new Intl.NumberFormat("fa-IR");
 
-export default async function TodaySmsPage() {
+const MAX_LIMIT = 100;
+
+export default async function TodaySmsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ limit?: string }>;
+}) {
+  const params = await searchParams;
+  const requested = Number.parseInt(params.limit ?? "", 10);
+  const limit = Number.isFinite(requested)
+    ? Math.min(MAX_LIMIT, Math.max(DAILY_SMS_TARGETS, requested))
+    : DAILY_SMS_TARGETS;
   const supabase = await createClient();
-  const { items, candidates, skipped, failed } = await loadTodayTargets(supabase);
+  const { items, candidates, skipped, failed } = await loadTodayTargets(supabase, limit);
 
   return (
     <AppShell active="sms-today" title="پیامک‌های امروز" subtitle="مشتری‌هایی که امروز ارزش پیام دادن دارند">
@@ -47,6 +58,12 @@ export default async function TodaySmsPage() {
       </p>
 
       <TodaySmsList targets={items} />
+
+      {candidates > items.length && limit < MAX_LIMIT ? (
+        <Link className={todayStyles.more} href={`/sms/today?limit=${Math.min(MAX_LIMIT, limit + DAILY_SMS_TARGETS)}`}>
+          {number.format(Math.min(DAILY_SMS_TARGETS, candidates - items.length))} نفر بیشتر
+        </Link>
+      ) : null}
     </AppShell>
   );
 }
