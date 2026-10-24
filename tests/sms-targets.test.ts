@@ -163,7 +163,7 @@ test("one mobile on two customer records gets one message; Arabic letters become
     ["a", "c"],
   );
 
-  assert.match(draftSmsText("reorder", "حسيني", "ملحفه طوسي"), /^حسینی گرامی، .*ملحفه طوسی/);
+  assert.match(draftSmsText("reorder", "حسيني", "ملحفه طوسي"), /^دکتر حسینی گرامی، .*ملحفه طوسی/);
   const { configuredPatterns, patternArgs } = await import("../src/lib/sms/patterns");
   const pattern = configuredPatterns({ MELIPAYAMAK_PATTERN_FOLLOWUP: "123" }).find((item) => item.key === "followup");
   assert.ok(pattern);
@@ -191,4 +191,22 @@ test("being due now decides the message over a general drop in sales", () => {
   assert.equal(due.kind, "reorder");
   assert.ok(due.reasons.some((reason) => reason.includes("کمتر از ۶ ماه قبل")));
   assert.match(draftSmsText("reorder", "اقاي صادقي", null), /^آقای صادقی گرامی/);
+});
+
+test("SMS greeting: a bare name is addressed as doctor; titles and businesses stay as they are", async () => {
+  const { smsGreetingName } = await import("../src/lib/sms/greeting");
+  assert.equal(smsGreetingName("صفري"), "دکتر صفری");
+  assert.equal(smsGreetingName("سعيده فرهمند"), "دکتر سعیده فرهمند");
+  assert.equal(smsGreetingName("دکتر کهن دل"), "دکتر کهن دل");
+  assert.equal(smsGreetingName("خانم توکلي"), "خانم توکلی");
+  assert.equal(smsGreetingName("اقاي صادقي"), "آقای صادقی");
+  assert.equal(smsGreetingName("فيزيوتراپي الا خانم تسليمي"), "فیزیوتراپی الا خانم تسلیمی");
+  assert.equal(smsGreetingName("طحان طب مرودشت"), "طحان طب مرودشت");
+  assert.equal(smsGreetingName("پوشاک ايزدي"), "پوشاک ایزدی");
+  assert.equal(smsGreetingName("طباطبايي"), "دکتر طباطبایی", "a business word must be a whole word");
+  assert.match(draftSmsText("winback", "هلاکو", null), /^دکتر هلاکو گرامی، مدتی است/);
+
+  const { readFileSync } = await import("node:fs");
+  const list = readFileSync("src/app/sms/today/today-sms-list.tsx", "utf8");
+  assert.match(list, /target\.patternAllowed && target\.kind !== "winback" \? "pattern" : "text"/, "win-back defaults to the personal text");
 });

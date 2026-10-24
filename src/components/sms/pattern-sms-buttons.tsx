@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 
+import { smsGreetingName } from "@/lib/sms/greeting";
+
 import styles from "./pattern-sms.module.css";
 
 export type PatternOption = {
@@ -81,7 +83,7 @@ export default function PatternSmsButtons({
     // A payment reminder starts from the newest invoice with no sign of payment.
     const latest = pattern.key === "payment" ? invoices.find((invoice) => !invoice.settled) : invoices[0];
     const sources: Record<string, string> = {
-      name: customerName,
+      name: smsGreetingName(customerName).slice(0, 40),
       title: "آقا",
       lastName: customerName,
       invoice: latest?.number ?? "",
