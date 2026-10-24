@@ -15,6 +15,7 @@ import {
   type TargetCustomer,
 } from "@/lib/sales/sms-targets";
 import { normalizeIranMobile } from "@/lib/sms/melipayamak";
+import type { LastSms } from "@/lib/sales/call-list";
 import { predictNeed, type ItemPurchase, type NeedPrediction } from "@/lib/sales/purchase-timing";
 import { smsGreetingName } from "@/lib/sms/greeting";
 import { configuredPatterns } from "@/lib/sms/patterns";
@@ -90,6 +91,8 @@ async function loadSignals(supabase: Supabase, now: Date) {
         .from("followups")
         .select("customer_id,followup_at,outcome")
         .gte("followup_at", since(180))
+        // Every accepted SMS logs a follow-up row; only real contacts count.
+        .neq("channel", "sms")
         .order("followup_at", { ascending: false })
         .order("id")
         .range(from, to),
@@ -100,10 +103,12 @@ async function loadSignals(supabase: Supabase, now: Date) {
       created_at: string;
       request_success: boolean;
       delivery_status: string | null;
+      provider_status: string | null;
+      mode: string | null;
     }>((from, to) =>
       supabase
         .from("sms_messages")
-        .select("customer_id,recipient,created_at,request_success,delivery_status")
+        .select("customer_id,recipient,created_at,request_success,delivery_status,provider_status,mode")
         .gte("created_at", since(WINBACK_COOLDOWN_DAYS))
         .order("id")
         .range(from, to),
@@ -128,7 +133,21 @@ async function loadSignals(supabase: Supabase, now: Date) {
     const current = lastSms.get(key);
     if (!current || at > current) lastSms.set(key, at);
   };
+  // The latest SMS the provider accepted, with its delivery result, for
+  // the call list ("did not reach them", "no reply").
+  const lastSmsDetail = new Map<string, LastSms>();
   for (const row of sms.rows) {
+    if (row.customer_id && row.request_success) {
+      const current = lastSmsDetail.get(row.customer_id);
+      if (!current || row.created_at > current.at) {
+        lastSmsDetail.set(row.customer_id, {
+          at: row.created_at,
+          deliveryStatus: row.delivery_status,
+          providerStatus: row.provider_status,
+          mode: row.mode,
+        });
+      }
+    }
     if (!row.request_success && row.delivery_status !== "unknown") continue;
     keep(row.customer_id, row.created_at);
     keep(mobileKey(row.recipient), row.created_at);
@@ -174,6 +193,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
     trend: salesTrend(invoices.rows, now),
     timing,
     rfm: invoices.error ? null : rfmScores(invoices.rows, now),
+    lastSmsDetail,
     products: topProducts(products.rows),
     lastContact: latestContactByCustomer(followups.rows),
     latestOutcome,
@@ -271,5 +291,19 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     patternAllowed: reorderPattern && (target.kind === "reorder" || target.kind === "winback"),
   }));
 
-  return { items, candidates, skipped, failed: data.failed, scoreById };
+  // Valuable enough to phone when an SMS gets no response: the top fifth by
+  // purchase frequency or order value, a VIP/key customer, or (no recent
+  // purchases) the top 10% by lifetime sales.
+  const highValue = new Set(
+    data.customers
+      .filter((customer) => {
+        const rfm = data.rfm?.get(customer.id);
+        if (customer.priority === "vip" || customer.priority === "high") return true;
+        if (rfm) return rfm.frequencyRank >= 5 || rfm.monetaryRank >= 5;
+        return Number(customer.total_sales ?? 0) > 0 && Number(customer.total_sales) >= thresholds.topTenSales;
+      })
+      .map((customer) => customer.id),
+  );
+
+  return { items, candidates, skipped, failed: data.failed, scoreById, lastSms: data.lastSmsDetail, highValue };
 }

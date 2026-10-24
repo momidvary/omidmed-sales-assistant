@@ -33,6 +33,8 @@ export async function POST() {
       .eq("request_success", true)
       .not("provider_rec_id", "is", null)
       .in("delivery_status", ["accepted", "unknown"])
+      // Delivery results older than a month no longer change anything.
+      .gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString())
       .order("created_at", { ascending: true })
       .order("id")
       .range(offset, offset + pageSize - 1);

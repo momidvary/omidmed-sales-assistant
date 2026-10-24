@@ -36,7 +36,7 @@ function numeric(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function tehranDayBounds(now: Date) {
+export function tehranDayBounds(now: Date) {
   const key = new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
     month: "2-digit",
