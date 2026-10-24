@@ -149,3 +149,22 @@ test("today's SMS list drops sent customers and refreshes to bring in the next o
   const page = readFileSync("src/app/sms/today/page.tsx", "utf8");
   assert.match(page, /loadTodayTargets\(supabase, limit\)/, "the list can grow past 20");
 });
+
+test("one mobile on two customer records gets one message; Arabic letters become Persian", async () => {
+  const due = { ...base, days_since_last_purchase: 36 };
+  const first = scoreSmsTarget({ ...due, id: "a", total_sales: 300_000_000 }, quiet, context)!;
+  const second = scoreSmsTarget({ ...due, id: "b", phone: "+98 912 000 0000" }, quiet, context)!;
+  const other = scoreSmsTarget({ ...due, id: "c", phone: "09121111111" }, quiet, context)!;
+  const { normalizeIranMobile } = await import("../src/lib/sms/melipayamak");
+  assert.deepEqual(
+    rankSmsTargets([second, first, other], 20, normalizeIranMobile).map((target) => target.customer.id),
+    ["a", "c"],
+  );
+
+  assert.match(draftSmsText("reorder", "حسيني", "ملحفه طوسي"), /^حسینی گرامی، .*ملحفه طوسی/);
+  const { configuredPatterns, patternArgs } = await import("../src/lib/sms/patterns");
+  const pattern = configuredPatterns({ MELIPAYAMAK_PATTERN_FOLLOWUP: "123" }).find((item) => item.key === "followup");
+  assert.ok(pattern);
+  const values = Object.fromEntries(pattern.variables.map((variable) => [variable.key, "كاظمي"]));
+  assert.deepEqual(patternArgs(pattern, values), { args: pattern.variables.map(() => "کاظمی") });
+});

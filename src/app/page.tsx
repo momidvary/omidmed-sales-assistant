@@ -22,6 +22,8 @@ import { getTeamContext } from "@/lib/team";
 import { tehranDateKey as sharedTehranDateKey } from "@/lib/finance/metrics";
 
 const number = new Intl.NumberFormat("fa-IR");
+const syncTime = new Intl.DateTimeFormat("fa-IR", { timeStyle: "short", timeZone: "Asia/Tehran" });
+const syncDateTime = new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Tehran" });
 const DAILY_TARGET = 15;
 
 const allowedViews = new Set(["needs", "ok"]);
@@ -61,6 +63,7 @@ type FollowupRow = {
 };
 
 type DailySalesRow = {
+  invoice_date: string;
   invoice_count: number | string;
   invoiced_sales_amount: number | string;
 };
@@ -233,6 +236,7 @@ export default async function Home({
   const currentPage = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
   const supabase = await createClient();
   const todayKey = tehranDateKey();
+  const yesterdayKey = tehranDateKey(new Date(Date.now() - 86_400_000));
 
   const [customerResult, followupResult, dailySalesResult] = await Promise.all([
     collectAllRows<WorkspaceCustomer>((from, to) =>
@@ -253,15 +257,14 @@ export default async function Home({
     ),
     supabase
       .from("owner_sales_daily")
-      .select("invoice_count,invoiced_sales_amount")
-      .eq("invoice_date", todayKey)
-      .maybeSingle(),
+      .select("invoice_date,invoice_count,invoiced_sales_amount")
+      .in("invoice_date", [todayKey, yesterdayKey]),
   ]);
 
   // Counts for the task cards. Bank work is only loaded for the owner.
   const team = await getTeamContext();
   const isOwnerUser = team?.role !== "secretary";
-  const [smsTargets, dueQuotes, bankCounts, unsettled] = await Promise.all([
+  const [smsTargets, dueQuotes, bankCounts, unsettled, lastSync] = await Promise.all([
     loadTodayTargets(supabase),
     supabase
       .from("sales_opportunities")
@@ -270,11 +273,24 @@ export default async function Home({
       .lte("next_followup_at", new Date(`${todayKey}T23:59:59.999+03:30`).toISOString()),
     isOwnerUser ? pendingCounts(supabase).catch(() => null) : Promise.resolve(null),
     isOwnerUser ? loadUnsettledInvoices(supabase).catch(() => null) : Promise.resolve(null),
+    // Today's invoices are only as fresh as the last Holoo sync.
+    isOwnerUser
+      ? supabase
+          .from("holo_sync_runs")
+          .select("completed_at")
+          .eq("status", "completed")
+          .order("completed_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve(null),
   ]);
 
   const customers = customerResult.data;
   const followups = followupResult.data;
-  const dailySales = dailySalesResult.data as DailySalesRow | null;
+  const dailyRows = (dailySalesResult.data ?? []) as DailySalesRow[];
+  const todaySales = dailyRows.find((row) => row.invoice_date === todayKey);
+  const yesterdaySales = dailyRows.find((row) => row.invoice_date === yesterdayKey);
+  const lastSyncAt = (lastSync?.data as { completed_at: string | null } | null)?.completed_at ?? null;
   const lastContact = latestContactByCustomer(followups);
 
   const reorderPattern = configuredPatterns()
@@ -386,10 +402,27 @@ export default async function Home({
         ) : null}
       </section>
 
-      <p className={styles.todaySales}>
-        فروش فاکتورشده امروز: {number.format(numeric(dailySales?.invoice_count))} فاکتور ·{" "}
-        {formatMoney(dailySales?.invoiced_sales_amount)} تومان
-      </p>
+      <section className={styles.todaySales} aria-label="فاکتورهای امروز">
+        <div>
+          <span>فاکتورهای امروز</span>
+          <strong>{number.format(numeric(todaySales?.invoice_count))} فاکتور</strong>
+        </div>
+        <div>
+          <span>مبلغ فاکتورهای امروز</span>
+          <strong>{formatMoney(todaySales?.invoiced_sales_amount)} تومان</strong>
+        </div>
+        <p>
+          دیروز: {number.format(numeric(yesterdaySales?.invoice_count))} فاکتور ·{" "}
+          {formatMoney(yesterdaySales?.invoiced_sales_amount)} تومان
+          {lastSyncAt
+            ? ` · آخرین دریافت از هلو: ${
+                tehranDateKey(new Date(lastSyncAt)) === todayKey
+                  ? `امروز ساعت ${syncTime.format(new Date(lastSyncAt))}`
+                  : syncDateTime.format(new Date(lastSyncAt))
+              }`
+            : ""}
+        </p>
+      </section>
 
       <section className={styles.workspace} id="work-queue">
         <article className={styles.mainPanel}>

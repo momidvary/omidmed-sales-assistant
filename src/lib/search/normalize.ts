@@ -12,6 +12,11 @@ export function normalizeSearchText(value: string) {
     .toLocaleLowerCase("fa");
 }
 
+/** Arabic ي/ى/ك (common in Holoo names) as the Persian letters. */
+export function persianLetters(value: string) {
+  return value.replace(/[يى]/g, "ی").replace(/ك/g, "ک");
+}
+
 export function escapeLike(value: string) {
   return value.replace(/[%_]/g, "");
 }

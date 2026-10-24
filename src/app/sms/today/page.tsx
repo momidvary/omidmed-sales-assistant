@@ -52,6 +52,7 @@ export default async function TodaySmsPage({
           ["تماس اخیر", "تماس در هفته اخیر"],
           ["موبایل ندارد", "بدون موبایل معتبر"],
           ["از دست رفته", "از دست رفته"],
+          ["شماره تکراری", "شماره تکراری در چند مشتری"],
         ]
           .map(([key, label]) => `${label}: ${number.format(skipped[key] ?? 0)}`)
           .join(" · ")}

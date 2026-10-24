@@ -7,6 +7,7 @@
 
 import { purchaseCycleDays, RECENT_CONTACT_DAYS } from "./followup-need";
 import { isServiceLine } from "@/lib/products/service-lines";
+import { persianLetters } from "@/lib/search/normalize";
 
 import { timingReason, timingSignal, type NeedPrediction } from "./purchase-timing";
 
@@ -308,17 +309,32 @@ export function topProducts(
   return new Map([...best].map(([id, entry]) => [id, entry.name]));
 }
 
-export function rankSmsTargets(targets: Array<SmsTarget | null>, limit = DAILY_SMS_TARGETS) {
+export function rankSmsTargets(
+  targets: Array<SmsTarget | null>,
+  limit = DAILY_SMS_TARGETS,
+  phoneKey: (phone: string | null) => string | null = () => null,
+) {
+  // One mobile shared by two customer records gets one message: the
+  // higher-ranked record keeps it.
+  const seen = new Set<string>();
   return targets
     .filter((target): target is SmsTarget => Boolean(target))
     .sort((a, b) => b.score - a.score || numeric(b.customer.total_sales) - numeric(a.customer.total_sales))
+    .filter((target) => {
+      const key = phoneKey(target.customer.phone);
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .slice(0, limit);
 }
 
 /** Short product name that fits a sentence. */
 function productPhrase(product: string | null) {
   if (!product) return "لوازم مصرفی فیزیوتراپی";
-  return product.length > 40 ? `${product.slice(0, 38)}…` : product;
+  const name = persianLetters(product);
+  return name.length > 40 ? `${name.slice(0, 38)}…` : name;
 }
 
 /**
@@ -326,7 +342,7 @@ function productPhrase(product: string | null) {
  * the company number; the opt-out line is added by the send route.
  */
 export function draftSmsText(kind: TargetKind, name: string, product: string | null) {
-  const who = `${name.replace(/\s+/g, " ").trim()} گرامی`;
+  const who = `${persianLetters(name).replace(/\s+/g, " ").trim()} گرامی`;
   const item = productPhrase(product);
   const texts: Record<TargetKind, string> = {
     reorder: `${who}، بر اساس سفارش‌های قبلی، زمان تهیه مجدد ${item} شما فرا رسیده است. برای ثبت سفارش و قیمت روز با {contact} تماس بگیرید.`,
