@@ -8,6 +8,7 @@
 // the message actually delivered is always the approved one.
 
 import { isServiceLine } from "@/lib/products/service-lines";
+import { persianLetters } from "@/lib/search/normalize";
 
 export type PatternKey = "order" | "payment" | "production" | "shipped" | "followup";
 
@@ -143,7 +144,7 @@ export function patternArgs(
 ): { args: string[] } | { error: string } {
   const args: string[] = [];
   for (const variable of pattern.variables) {
-    const value = String(values[variable.key] ?? "").replace(/\s+/g, " ").trim();
+    const value = persianLetters(String(values[variable.key] ?? "")).replace(/\s+/g, " ").trim();
     if (!value) return { error: `«${variable.label}» را وارد کنید.` };
     if (value.length > variable.maxLength) {
       return { error: `«${variable.label}» حداکثر ${variable.maxLength} کاراکتر می‌تواند باشد.` };

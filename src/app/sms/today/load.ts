@@ -9,7 +9,7 @@ import {
   salesThresholds,
   salesTrend,
   scoreSmsTarget,
-  SMS_COOLDOWN_DAYS,
+  WINBACK_COOLDOWN_DAYS,
   TARGET_KIND_LABELS,
   topProducts,
   type TargetCustomer,
@@ -25,6 +25,13 @@ import type { TodayTarget } from "./today-sms-list";
 // "today's tasks" home page so both show the same list and count.
 
 const DAY_MS = 86_400_000;
+
+const mobileKey = (phone: string | null) => {
+  const mobile = normalizeIranMobile(phone);
+  return mobile ? `mobile:${mobile}` : null;
+};
+
+const later = (a: string | undefined, b: string | undefined) => (a && b ? (a > b ? a : b) : a ?? b) ?? null;
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -86,15 +93,19 @@ async function loadSignals(supabase: Supabase, now: Date) {
         .order("id")
         .range(from, to),
     ),
-    readAll<{ customer_id: string | null; created_at: string; request_success: boolean; delivery_status: string | null }>(
-      (from, to) =>
-        supabase
-          .from("sms_messages")
-          .select("customer_id,created_at,request_success,delivery_status")
-          .gte("created_at", since(SMS_COOLDOWN_DAYS))
-          .not("customer_id", "is", null)
-          .order("id")
-          .range(from, to),
+    readAll<{
+      customer_id: string | null;
+      recipient: string;
+      created_at: string;
+      request_success: boolean;
+      delivery_status: string | null;
+    }>((from, to) =>
+      supabase
+        .from("sms_messages")
+        .select("customer_id,recipient,created_at,request_success,delivery_status")
+        .gte("created_at", since(WINBACK_COOLDOWN_DAYS))
+        .order("id")
+        .range(from, to),
     ),
     readAll<{ customer_id: string }>((from, to) =>
       supabase
@@ -108,11 +119,18 @@ async function loadSignals(supabase: Supabase, now: Date) {
   ]);
 
   // A failed or rejected send does not count; an accepted or unknown one does.
+  // Kept per customer and per mobile, so a number shared by two records, or
+  // messaged from the free SMS page, also waits out the cooldown.
   const lastSms = new Map<string, string>();
+  const keep = (key: string | null, at: string) => {
+    if (!key) return;
+    const current = lastSms.get(key);
+    if (!current || at > current) lastSms.set(key, at);
+  };
   for (const row of sms.rows) {
-    if (!row.customer_id || (!row.request_success && row.delivery_status !== "unknown")) continue;
-    const current = lastSms.get(row.customer_id);
-    if (!current || row.created_at > current) lastSms.set(row.customer_id, row.created_at);
+    if (!row.request_success && row.delivery_status !== "unknown") continue;
+    keep(row.customer_id, row.created_at);
+    keep(mobileKey(row.recipient), row.created_at);
   }
 
   const latestOutcome = new Map<string, { at: string; outcome: string }>();
@@ -169,12 +187,27 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
   const data = await loadSignals(supabase, now);
   const thresholds = salesThresholds(data.customers);
 
+  // Holoo sometimes has two accounts for one customer. When another record
+  // with the same mobile bought more recently, that record speaks for the
+  // customer and this older one is left out.
+  const latestByMobile = new Map<string, string>();
+  for (const customer of data.customers) {
+    const key = mobileKey(customer.phone);
+    if (!key || !customer.last_purchase_at) continue;
+    const current = latestByMobile.get(key);
+    if (!current || customer.last_purchase_at > current) latestByMobile.set(key, customer.last_purchase_at);
+  }
+  const newerTwin = (customer: (typeof data.customers)[number]) => {
+    const latest = latestByMobile.get(mobileKey(customer.phone) ?? "");
+    return Boolean(latest && latest > (customer.last_purchase_at ?? ""));
+  };
+
   const skipped: Record<string, number> = {};
   // Every customer is scored (the call list uses it); exclusions only keep
   // someone off today's SMS list.
   const ranked = data.customers.map((customer) => {
     const signals = {
-      lastSmsAt: data.lastSms.get(customer.id) ?? null,
+      lastSmsAt: later(data.lastSms.get(customer.id), data.lastSms.get(mobileKey(customer.phone) ?? "")),
       lastContactAt: data.lastContact.get(customer.id) ?? null,
     };
     const outcome = data.latestOutcome.get(customer.id);
@@ -195,7 +228,9 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
       },
       { ...thresholds, now },
     );
-    const excluded = exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now);
+    const excluded =
+      exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now, target?.kind ?? null) ??
+      (newerTwin(customer) ? "شماره تکراری" : null);
     return { target, excluded };
   });
 
@@ -213,8 +248,11 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     return null;
   });
 
-  const candidates = scored.filter(Boolean).length;
-  const targets = rankSmsTargets(scored, limit);
+  const unique = rankSmsTargets(scored, Infinity, mobileKey);
+  const duplicates = scored.filter(Boolean).length - unique.length;
+  if (duplicates) skipped["شماره تکراری"] = duplicates;
+  const candidates = unique.length;
+  const targets = unique.slice(0, limit);
   const reorderPattern = configuredPatterns().some((pattern) => pattern.key === "followup");
 
   const items: TodayTarget[] = targets.map((target) => ({

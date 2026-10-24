@@ -7,12 +7,18 @@
 
 import { purchaseCycleDays, RECENT_CONTACT_DAYS } from "./followup-need";
 import { isServiceLine } from "@/lib/products/service-lines";
+import { persianLetters } from "@/lib/search/normalize";
 
 import { timingReason, timingSignal, type NeedPrediction } from "./purchase-timing";
 
 export const DAILY_SMS_TARGETS = 20;
 /** A customer gets at most one SMS in this many days. */
 export const SMS_COOLDOWN_DAYS = 14;
+/**
+ * A customer who stopped buying is not reminded every two weeks: one
+ * win-back message, then a longer wait.
+ */
+export const WINBACK_COOLDOWN_DAYS = 60;
 
 const DAY_MS = 86_400_000;
 const TREND_WINDOW_DAYS = 182;
@@ -137,11 +143,13 @@ export function exclusionReason(
   signals: Pick<TargetSignals, "lastSmsAt" | "lastContactAt">,
   hasMobile: boolean,
   now: Date,
+  kind: TargetKind | null = null,
 ) {
   if (customer.status === "lost") return "از دست رفته";
   if (customer.archived_at) return "بایگانی";
   if (!hasMobile) return "موبایل ندارد";
   if (daysSince(signals.lastSmsAt, now) < SMS_COOLDOWN_DAYS) return "پیامک اخیر";
+  if (kind === "winback" && daysSince(signals.lastSmsAt, now) < WINBACK_COOLDOWN_DAYS) return "پیامک اخیر";
   if (daysSince(signals.lastContactAt, now) < RECENT_CONTACT_DAYS) return "تماس اخیر";
   return null;
 }
@@ -179,15 +187,24 @@ export function scoreSmsTarget(
   if (timing && timed) {
     score += timed.points;
     triggers.add(timed.kind);
+    // Win-back is about the customer, not one product: say how long they
+    // have not bought anything.
+    const silentDays =
+      customer.days_since_last_purchase == null
+        ? timing.daysSinceLast
+        : Math.round(numeric(customer.days_since_last_purchase));
     reasons.push(
       timed.kind === "winback"
-        ? `${timingReason(timing)}؛ بیش از دو برابر حالت معمول خرید نکرده`
+        ? `${persianNumber.format(silentDays)} روز است هیچ خریدی نکرده؛ معمولاً هر حدود ${persianNumber.format(
+            timing.intervalDays,
+          )} روز سفارش می‌داد`
         : timingReason(timing),
     );
   }
 
-  // 2) Trend: buying clearly less than six months before.
-  if (signals.previousSales > 0 && signals.recentSales < signals.previousSales * 0.6) {
+  // 2) Trend: still buying, but clearly less than six months before. No
+  // purchase at all is the win-back case above, not counted twice.
+  if (signals.recentSales > 0 && signals.previousSales > 0 && signals.recentSales < signals.previousSales * 0.6) {
     const drop = Math.round((1 - signals.recentSales / signals.previousSales) * 100);
     score += 15;
     triggers.add("declining");
@@ -245,7 +262,9 @@ export function scoreSmsTarget(
   if (customer.priority === "vip") score += 15;
   else if (customer.priority === "high") score += 10;
 
-  const kind: TargetKind = (["scheduled", "quote", "winback", "declining", "reorder"] as const).find((item) =>
+  // The message follows the most specific reason: being due now beats a
+  // general drop in sales.
+  const kind: TargetKind = (["scheduled", "quote", "reorder", "winback", "declining"] as const).find((item) =>
     triggers.has(item),
   )!;
 
@@ -308,17 +327,32 @@ export function topProducts(
   return new Map([...best].map(([id, entry]) => [id, entry.name]));
 }
 
-export function rankSmsTargets(targets: Array<SmsTarget | null>, limit = DAILY_SMS_TARGETS) {
+export function rankSmsTargets(
+  targets: Array<SmsTarget | null>,
+  limit = DAILY_SMS_TARGETS,
+  phoneKey: (phone: string | null) => string | null = () => null,
+) {
+  // One mobile shared by two customer records gets one message: the
+  // higher-ranked record keeps it.
+  const seen = new Set<string>();
   return targets
     .filter((target): target is SmsTarget => Boolean(target))
     .sort((a, b) => b.score - a.score || numeric(b.customer.total_sales) - numeric(a.customer.total_sales))
+    .filter((target) => {
+      const key = phoneKey(target.customer.phone);
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .slice(0, limit);
 }
 
 /** Short product name that fits a sentence. */
 function productPhrase(product: string | null) {
   if (!product) return "لوازم مصرفی فیزیوتراپی";
-  return product.length > 40 ? `${product.slice(0, 38)}…` : product;
+  const name = persianLetters(product);
+  return name.length > 40 ? `${name.slice(0, 38)}…` : name;
 }
 
 /**
@@ -326,7 +360,10 @@ function productPhrase(product: string | null) {
  * the company number; the opt-out line is added by the send route.
  */
 export function draftSmsText(kind: TargetKind, name: string, product: string | null) {
-  const who = `${name.replace(/\s+/g, " ").trim()} گرامی`;
+  const who = `${persianLetters(name)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^اقای /, "آقای ")} گرامی`;
   const item = productPhrase(product);
   const texts: Record<TargetKind, string> = {
     reorder: `${who}، بر اساس سفارش‌های قبلی، زمان تهیه مجدد ${item} شما فرا رسیده است. برای ثبت سفارش و قیمت روز با {contact} تماس بگیرید.`,

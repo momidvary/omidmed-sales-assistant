@@ -96,3 +96,26 @@ test("shipping and other charges are never treated as products", async () => {
   ];
   assert.equal(productRunOut(items)?.product, "ملحفه");
 });
+
+test("a product dropped from later orders does not make an active customer win-back", () => {
+  // Sheets every 30 days until 200 days ago; gel every month since, last 16 days ago.
+  const items = [
+    { date: daysAgo(260), product: "ملحفه", quantity: 10 },
+    { date: daysAgo(230), product: "ملحفه", quantity: 10 },
+    { date: daysAgo(200), product: "ملحفه", quantity: 10 },
+    ...[166, 136, 106, 76, 46, 16].map((days) => ({ date: daysAgo(days), product: "ژل", quantity: 2 })),
+  ];
+  assert.equal(productRunOut(items)?.product, "ژل", "sheets ran out before the later orders");
+
+  const prediction = predictNeed({ invoiceDates: items.map((item) => item.date), items, now })!;
+  assert.equal(prediction.daysSinceLast, 16);
+  assert.equal(timingSignal(prediction), null, "bought 16 days ago on a 30-day rhythm: nothing to send");
+
+  // Ordering a little early without the product keeps it.
+  const early = [
+    { date: daysAgo(70), product: "ملحفه", quantity: 10 },
+    { date: daysAgo(40), product: "ملحفه", quantity: 10 },
+    { date: daysAgo(15), product: "ژل", quantity: 1 },
+  ];
+  assert.equal(productRunOut(early)?.product, "ملحفه");
+});
