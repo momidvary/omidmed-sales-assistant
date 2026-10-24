@@ -240,3 +240,27 @@
     width: 100%;
   }
 }
+
+.sentNote {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #bfe5d9;
+  border-radius: 11px;
+  background: #effaf6;
+  color: #18715f;
+  font-size: 14px;
+}
+
+.more {
+  display: block;
+  margin: 14px auto 0;
+  width: fit-content;
+  padding: 10px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--primary-dark);
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+}

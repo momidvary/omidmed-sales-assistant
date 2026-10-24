@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import styles from "./today.module.css";
@@ -63,14 +64,14 @@ async function postJson(url: string, body: unknown) {
 }
 
 export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
+  const router = useRouter();
   const [contact, setContact] = useState("");
-  const [channels, setChannels] = useState<Record<string, Channel>>(() =>
-    Object.fromEntries(targets.map((target) => [target.customerId, target.patternAllowed ? "pattern" : "text"])),
-  );
-  const [texts, setTexts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(targets.map((target) => [target.customerId, target.draft])),
-  );
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(targets.map((target) => target.customerId)));
+  // Only the user's changes are kept here; customers that arrive after a
+  // refresh start from their own defaults.
+  const [channelChoice, setChannels] = useState<Record<string, Channel>>({});
+  const [textEdits, setTexts] = useState<Record<string, string>>({});
+  const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set());
+  const [sent, setSent] = useState<Set<string>>(() => new Set());
   const [results, setResults] = useState<Record<string, Result>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [ai, setAi] = useState<Record<string, AiSuggestion[] | "loading" | string>>({});
@@ -82,7 +83,14 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
     setContact(readContact());
   }, []);
 
-  if (!targets.length) {
+  const channelOf = (target: TodayTarget): Channel =>
+    channelChoice[target.customerId] ?? (target.patternAllowed ? "pattern" : "text");
+  const textOf = (target: TodayTarget) => textEdits[target.customerId] ?? target.draft;
+  // A sent customer leaves the list at once; the server keeps them out for
+  // 14 days and the refresh brings in the next customers.
+  const visible = targets.filter((target) => !sent.has(target.customerId));
+
+  if (!visible.length) {
     return (
       <div className={styles.empty}>
         <h3>امروز مشتری‌ای نیاز به پیامک ندارد</h3>
@@ -91,10 +99,10 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
     );
   }
 
-  const finalText = (customerId: string) => (texts[customerId] ?? "").replaceAll("{contact}", contact.trim());
+  const finalText = (target: TodayTarget) => textOf(target).replaceAll("{contact}", contact.trim());
 
   async function send(target: TodayTarget) {
-    const channel = channels[target.customerId];
+    const channel = channelOf(target);
     if (!contact.trim()) {
       setResults((current) => ({
         ...current,
@@ -112,7 +120,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
           clientRequestId: requestIds.current[target.customerId],
         });
       } else {
-        const text = finalText(target.customerId).trim();
+        const text = finalText(target).trim();
         if (!text) throw new Error("متن پیامک خالی است.");
         await postJson("/api/sms/send", {
           customerId: target.customerId,
@@ -124,12 +132,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
         });
       }
       delete requestIds.current[target.customerId];
-      setResults((current) => ({ ...current, [target.customerId]: { ok: true, text: "ارسال شد ✓" } }));
-      setSelected((current) => {
-        const next = new Set(current);
-        next.delete(target.customerId);
-        return next;
-      });
+      setSent((current) => new Set(current).add(target.customerId));
       return true;
     } catch (error) {
       setResults((current) => ({
@@ -142,17 +145,20 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
 
   async function sendOne(target: TodayTarget) {
     setBusy(target.customerId);
-    await send(target);
+    const ok = await send(target);
     setBusy(null);
+    if (ok) router.refresh();
   }
 
   async function sendSelected() {
     setBusy("all");
-    for (const target of targets) {
-      if (!selected.has(target.customerId) || results[target.customerId]?.ok) continue;
-      await send(target);
+    let anySent = false;
+    for (const target of visible) {
+      if (unchecked.has(target.customerId)) continue;
+      if (await send(target)) anySent = true;
     }
     setBusy(null);
+    if (anySent) router.refresh();
   }
 
   async function suggest(target: TodayTarget) {
@@ -174,9 +180,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
     }
   }
 
-  const pendingSelected = targets.filter(
-    (target) => selected.has(target.customerId) && !results[target.customerId]?.ok,
-  ).length;
+  const pendingSelected = visible.filter((target) => !unchecked.has(target.customerId)).length;
 
   return (
     <div className={styles.wrap}>
@@ -199,8 +203,15 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
         </button>
       </div>
 
-      {targets.map((target) => {
-        const channel = channels[target.customerId];
+      {sent.size ? (
+        <p className={styles.sentNote}>
+          {number.format(sent.size)} پیامک ارسال شد؛ این مشتری‌ها تا ۱۴ روز در فهرست نمی‌آیند و نفرات بعدی جایشان را
+          می‌گیرند.
+        </p>
+      ) : null}
+
+      {visible.map((target) => {
+        const channel = channelOf(target);
         const result = results[target.customerId];
         const suggestions = ai[target.customerId];
         return (
@@ -209,13 +220,12 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
               <label className={styles.pick}>
                 <input
                   type="checkbox"
-                  checked={selected.has(target.customerId)}
-                  disabled={result?.ok}
+                  checked={!unchecked.has(target.customerId)}
                   onChange={(event) =>
-                    setSelected((current) => {
+                    setUnchecked((current) => {
                       const next = new Set(current);
-                      if (event.target.checked) next.add(target.customerId);
-                      else next.delete(target.customerId);
+                      if (event.target.checked) next.delete(target.customerId);
+                      else next.add(target.customerId);
                       return next;
                     })
                   }
@@ -267,7 +277,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
               <>
                 <textarea
                   className={styles.text}
-                  value={texts[target.customerId] ?? ""}
+                  value={textOf(target)}
                   maxLength={600}
                   rows={3}
                   onChange={(event) => setTexts((current) => ({ ...current, [target.customerId]: event.target.value }))}

@@ -139,3 +139,13 @@ test("RFM ranks frequency and order value over the last 12 months", async () => 
   assert.ok(strong.score > weak.score);
   assert.ok(strong.reasons.some((reason) => reason.includes("۶ بار خرید")));
 });
+
+test("today's SMS list drops sent customers and refreshes to bring in the next ones", async () => {
+  const { readFileSync } = await import("node:fs");
+  const list = readFileSync("src/app/sms/today/today-sms-list.tsx", "utf8");
+  assert.match(list, /targets\.filter\(\(target\) => !sent\.has\(target\.customerId\)\)/);
+  assert.match(list, /if \(ok\) router\.refresh\(\)/);
+  assert.match(list, /if \(anySent\) router\.refresh\(\)/);
+  const page = readFileSync("src/app/sms/today/page.tsx", "utf8");
+  assert.match(page, /loadTodayTargets\(supabase, limit\)/, "the list can grow past 20");
+});

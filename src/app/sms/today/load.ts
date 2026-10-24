@@ -3,6 +3,7 @@ import { latestContactByCustomer } from "@/lib/sales/followup-need";
 import {
   draftSmsText,
   exclusionReason,
+  DAILY_SMS_TARGETS,
   rankSmsTargets,
   rfmScores,
   salesThresholds,
@@ -163,7 +164,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
   };
 }
 
-export async function loadTodayTargets(supabase: Supabase) {
+export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TARGETS) {
   const now = new Date();
   const data = await loadSignals(supabase, now);
   const thresholds = salesThresholds(data.customers);
@@ -213,7 +214,7 @@ export async function loadTodayTargets(supabase: Supabase) {
   });
 
   const candidates = scored.filter(Boolean).length;
-  const targets = rankSmsTargets(scored);
+  const targets = rankSmsTargets(scored, limit);
   const reorderPattern = configuredPatterns().some((pattern) => pattern.key === "followup");
 
   const items: TodayTarget[] = targets.map((target) => ({
