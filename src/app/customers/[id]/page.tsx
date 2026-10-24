@@ -18,7 +18,6 @@ import CustomerFilesManager, {
 } from "./customer-files-manager";
 import JalaliDateTimeField from "./jalali-date-time-field";
 import styles from "./customer.module.css";
-import { normalizeHoloBalance } from "@/lib/finance/metrics";
 import { SETTLEMENT_LABELS, settlementState } from "@/lib/bank/matching";
 
 const numberFormatter = new Intl.NumberFormat("fa-IR");
@@ -257,10 +256,9 @@ function isPast(value: string | null | undefined) {
 function buildRecommendation(input: {
   customer: CustomerRow;
   openOpportunity: OpportunityRow | null;
-  debtAmount: number;
   topProduct: string | null;
 }) {
-  const { customer, openOpportunity, debtAmount, topProduct } = input;
+  const { customer, openOpportunity, topProduct } = input;
   const customerName = customer.name || "مشتری گرامی";
   const daysSinceLastPurchase = numeric(
     customer.days_since_last_purchase,
@@ -280,22 +278,8 @@ function buildRecommendation(input: {
     } satisfies SmartRecommendation;
   }
 
-  // Holoo often misses settlements, so its balance alone never drives a
-  // payment demand: the message stays a general one and the reason says to
-  // check the bank data first.
-  if (debtAmount > 0) {
-    return {
-      level: "important",
-      title: "در هلو مانده حساب دارد؛ اول پرداخت‌ها را بررسی کنید",
-      reason: `هلو حدود ${formatMoney(
-        debtAmount,
-      )} تومان مانده نشان می‌دهد، ولی تسویه‌ها در هلو کامل ثبت نمی‌شوند. قبل از پیگیری پرداخت، در حسابداری بانکی بررسی شود.`,
-      channel: "بررسی پرداخت، سپس تماس",
-      nextStep: "بررسی واریزهای مشتری در بانک",
-      defaultMessage: `${customerName} گرامی، وقت بخیر. برای تهیه لوازم مصرفی فیزیوتراپی و اطلاع از قیمت روز در خدمتتان هستیم. امیدمِد`,
-    } satisfies SmartRecommendation;
-  }
-
+  // Holoo's balance never drives the next action: settlements are often
+  // missing there. It is shown in its own card only.
   if (
     openOpportunity &&
     (isPast(openOpportunity.next_followup_at) ||
@@ -650,12 +634,6 @@ export default async function CustomerPage({
         item.status === "open" || item.status === "on_hold",
     ) ?? null;
 
-  const holoBalance = normalizeHoloBalance({
-    amount: customer.holo_balance_amount,
-    status: customer.holo_balance_status,
-  });
-  const debtAmount = holoBalance.status === "debtor" ? holoBalance.amount : 0;
-
   const topProduct =
     productSummary[0]?.product_name ??
     customer.preferred_products?.[0] ??
@@ -664,7 +642,6 @@ export default async function CustomerPage({
   const recommendation = buildRecommendation({
     customer,
     openOpportunity,
-    debtAmount,
     topProduct,
   });
 

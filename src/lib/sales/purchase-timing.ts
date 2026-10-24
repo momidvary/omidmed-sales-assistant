@@ -18,6 +18,8 @@ export const SINGLE_PURCHASE_DAYS = 60;
 const REGULAR_SPREAD = 0.35;
 /** A product not bought within this long before the last purchase is ignored. */
 const STALE_PRODUCT_DAYS = 180;
+/** Share of a product's interval an order may come early without it. */
+const RUN_OUT_GRACE = 0.15;
 
 export type NeedBasis = "product" | "cycle" | "single";
 
@@ -70,8 +72,12 @@ export type ItemPurchase = { date: string; product: string; quantity: number };
  * Earliest predicted run-out over the products bought on at least two days.
  * Usage rate = quantity bought before the last purchase / days it covered;
  * the last purchase lasts its quantity / rate.
+ *
+ * A product whose run-out date passed before the customer's latest purchase
+ * is skipped: they ordered again without it, so they no longer get it from
+ * us (or still have stock), and it says nothing about when they need us.
  */
-export function productRunOut(items: ItemPurchase[]) {
+export function productRunOut(items: ItemPurchase[], lastPurchaseDate?: string) {
   const byProduct = new Map<string, Map<number, number>>();
   for (const item of items) {
     const name = item.product.replace(/\s+/g, " ").trim();
@@ -82,7 +88,10 @@ export function productRunOut(items: ItemPurchase[]) {
     byProduct.set(name, days);
   }
 
-  const lastPurchase = Math.max(...items.map((item) => dayIndex(item.date)));
+  const lastPurchase = Math.max(
+    ...items.map((item) => dayIndex(item.date)),
+    ...(lastPurchaseDate ? [dayIndex(lastPurchaseDate)] : []),
+  );
   let best: { product: string; lastDay: number; intervalDays: number; purchases: number } | null = null;
   for (const [product, days] of byProduct) {
     const purchases = [...days.entries()].sort((a, b) => a[0] - b[0]);
@@ -93,6 +102,8 @@ export function productRunOut(items: ItemPurchase[]) {
     const usedBeforeLast = purchases.slice(0, -1).reduce((sum, [, quantity]) => sum + quantity, 0);
     if (span <= 0 || usedBeforeLast <= 0) continue;
     const intervalDays = clampInterval(lastQuantity / (usedBeforeLast / span));
+    const grace = Math.max(MIN_INTERVAL_DAYS, Math.round(intervalDays * RUN_OUT_GRACE));
+    if (lastDay + intervalDays + grace < lastPurchase) continue;
     const candidate = { product, lastDay, intervalDays, purchases: purchases.length };
     if (!best) {
       best = candidate;
@@ -118,7 +129,8 @@ export function predictNeed(input: {
   const today = Math.floor(input.now.getTime() / DAY_MS);
   const lastDay = Math.max(...input.invoiceDates.map(dayIndex));
   const cycle = purchaseCycle(input.invoiceDates);
-  const runOut = input.items.length ? productRunOut(input.items) : null;
+  const lastDate = input.invoiceDates.reduce((latest, date) => (date > latest ? date : latest));
+  const runOut = input.items.length ? productRunOut(input.items, lastDate) : null;
 
   const build = (basis: NeedBasis, fromDay: number, intervalDays: number, regular: boolean, product: string | null) => {
     const daysSinceLast = today - fromDay;
