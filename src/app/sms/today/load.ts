@@ -9,7 +9,7 @@ import {
   salesThresholds,
   salesTrend,
   scoreSmsTarget,
-  SMS_COOLDOWN_DAYS,
+  WINBACK_COOLDOWN_DAYS,
   TARGET_KIND_LABELS,
   topProducts,
   type TargetCustomer,
@@ -103,7 +103,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
       supabase
         .from("sms_messages")
         .select("customer_id,recipient,created_at,request_success,delivery_status")
-        .gte("created_at", since(SMS_COOLDOWN_DAYS))
+        .gte("created_at", since(WINBACK_COOLDOWN_DAYS))
         .order("id")
         .range(from, to),
     ),
@@ -187,6 +187,21 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
   const data = await loadSignals(supabase, now);
   const thresholds = salesThresholds(data.customers);
 
+  // Holoo sometimes has two accounts for one customer. When another record
+  // with the same mobile bought more recently, that record speaks for the
+  // customer and this older one is left out.
+  const latestByMobile = new Map<string, string>();
+  for (const customer of data.customers) {
+    const key = mobileKey(customer.phone);
+    if (!key || !customer.last_purchase_at) continue;
+    const current = latestByMobile.get(key);
+    if (!current || customer.last_purchase_at > current) latestByMobile.set(key, customer.last_purchase_at);
+  }
+  const newerTwin = (customer: (typeof data.customers)[number]) => {
+    const latest = latestByMobile.get(mobileKey(customer.phone) ?? "");
+    return Boolean(latest && latest > (customer.last_purchase_at ?? ""));
+  };
+
   const skipped: Record<string, number> = {};
   // Every customer is scored (the call list uses it); exclusions only keep
   // someone off today's SMS list.
@@ -213,7 +228,9 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
       },
       { ...thresholds, now },
     );
-    const excluded = exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now);
+    const excluded =
+      exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now, target?.kind ?? null) ??
+      (newerTwin(customer) ? "شماره تکراری" : null);
     return { target, excluded };
   });
 

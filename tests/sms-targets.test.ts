@@ -148,6 +148,8 @@ test("today's SMS list drops sent customers and refreshes to bring in the next o
   assert.match(list, /if \(anySent\) router\.refresh\(\)/);
   const page = readFileSync("src/app/sms/today/page.tsx", "utf8");
   assert.match(page, /loadTodayTargets\(supabase, limit\)/, "the list can grow past 20");
+  const load = readFileSync("src/app/sms/today/load.ts", "utf8");
+  assert.match(load, /newerTwin\(customer\) \? "شماره تکراری"/, "an older record sharing a mobile with a newer buyer is left out");
 });
 
 test("one mobile on two customer records gets one message; Arabic letters become Persian", async () => {
@@ -167,4 +169,26 @@ test("one mobile on two customer records gets one message; Arabic letters become
   assert.ok(pattern);
   const values = Object.fromEntries(pattern.variables.map((variable) => [variable.key, "كاظمي"]));
   assert.deepEqual(patternArgs(pattern, values), { args: pattern.variables.map(() => "کاظمی") });
+});
+
+test("a lapsed customer is win-back once, not also 'declining', and waits longer for the next SMS", () => {
+  const lapsed = scoreSmsTarget(
+    { ...base, days_since_last_purchase: 263 },
+    { ...quiet, recentSales: 0, previousSales: 40_000_000 },
+    context,
+  )!;
+  assert.equal(lapsed.kind, "winback");
+  assert.match(lapsed.reasons[0], /۲۶۳ روز است هیچ خریدی نکرده/);
+  assert.ok(!lapsed.reasons.some((reason) => reason.includes("کمتر از ۶ ماه قبل")), "no purchase is not a 'drop'");
+
+  const signals = { lastSmsAt: daysAgo(30), lastContactAt: null };
+  assert.equal(exclusionReason(base, signals, true, now, "winback"), "پیامک اخیر");
+  assert.equal(exclusionReason(base, signals, true, now, "reorder"), null);
+});
+
+test("being due now decides the message over a general drop in sales", () => {
+  const due = scoreSmsTarget({ ...base, days_since_last_purchase: 31 }, { ...quiet, recentSales: 6_000_000 }, context)!;
+  assert.equal(due.kind, "reorder");
+  assert.ok(due.reasons.some((reason) => reason.includes("کمتر از ۶ ماه قبل")));
+  assert.match(draftSmsText("reorder", "اقاي صادقي", null), /^آقای صادقی گرامی/);
 });

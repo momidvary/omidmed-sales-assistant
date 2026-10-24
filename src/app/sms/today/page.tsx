@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import AppShell from "@/components/app-shell";
-import { DAILY_SMS_TARGETS, SMS_COOLDOWN_DAYS } from "@/lib/sales/sms-targets";
+import { DAILY_SMS_TARGETS, SMS_COOLDOWN_DAYS, WINBACK_COOLDOWN_DAYS } from "@/lib/sales/sms-targets";
 import { createClient } from "@/lib/supabase/server";
 
 import styles from "../sms.module.css";
@@ -48,7 +48,10 @@ export default async function TodaySmsPage({
       <p className={todayStyles.hint}>
         کنار گذاشته شده‌ها:{" "}
         {[
-          ["پیامک اخیر", `پیامک در ${number.format(SMS_COOLDOWN_DAYS)} روز اخیر`],
+          [
+            "پیامک اخیر",
+            `پیامک در ${number.format(SMS_COOLDOWN_DAYS)} روز اخیر (مشتری دورشده: ${number.format(WINBACK_COOLDOWN_DAYS)} روز)`,
+          ],
           ["تماس اخیر", "تماس در هفته اخیر"],
           ["موبایل ندارد", "بدون موبایل معتبر"],
           ["از دست رفته", "از دست رفته"],
