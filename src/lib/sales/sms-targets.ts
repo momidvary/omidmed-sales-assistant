@@ -8,6 +8,7 @@
 import { purchaseCycleDays, RECENT_CONTACT_DAYS } from "./followup-need";
 import { isServiceLine } from "@/lib/products/service-lines";
 import { persianLetters } from "@/lib/search/normalize";
+import { smsGreetingName } from "@/lib/sms/greeting";
 
 import { timingReason, timingSignal, type NeedPrediction } from "./purchase-timing";
 
@@ -360,10 +361,7 @@ function productPhrase(product: string | null) {
  * the company number; the opt-out line is added by the send route.
  */
 export function draftSmsText(kind: TargetKind, name: string, product: string | null) {
-  const who = `${persianLetters(name)
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^اقای /, "آقای ")} گرامی`;
+  const who = `${smsGreetingName(name)} گرامی`;
   const item = productPhrase(product);
   const texts: Record<TargetKind, string> = {
     reorder: `${who}، بر اساس سفارش‌های قبلی، زمان تهیه مجدد ${item} شما فرا رسیده است. برای ثبت سفارش و قیمت روز با {contact} تماس بگیرید.`,

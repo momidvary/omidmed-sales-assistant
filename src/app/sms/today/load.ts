@@ -16,6 +16,7 @@ import {
 } from "@/lib/sales/sms-targets";
 import { normalizeIranMobile } from "@/lib/sms/melipayamak";
 import { predictNeed, type ItemPurchase, type NeedPrediction } from "@/lib/sales/purchase-timing";
+import { smsGreetingName } from "@/lib/sms/greeting";
 import { configuredPatterns } from "@/lib/sms/patterns";
 import type { createClient } from "@/lib/supabase/server";
 
@@ -258,6 +259,7 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
   const items: TodayTarget[] = targets.map((target) => ({
     customerId: target.customer.id,
     name: target.customer.name,
+    greeting: smsGreetingName(target.customer.name),
     phone: target.customer.phone,
     kind: target.kind,
     kindLabel: TARGET_KIND_LABELS[target.kind],

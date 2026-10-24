@@ -9,6 +9,8 @@ import styles from "./today.module.css";
 export type TodayTarget = {
   customerId: string;
   name: string;
+  /** How the SMS addresses the customer ("دکتر …" for a bare name). */
+  greeting: string;
   phone: string | null;
   kind: string;
   kindLabel: string;
@@ -84,7 +86,9 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
   }, []);
 
   const channelOf = (target: TodayTarget): Channel =>
-    channelChoice[target.customerId] ?? (target.patternAllowed ? "pattern" : "text");
+    // A customer who stopped buying gets the personal "we miss you" text;
+    // the reorder pattern ("time to reorder") fits the ones who are due.
+    channelChoice[target.customerId] ?? (target.patternAllowed && target.kind !== "winback" ? "pattern" : "text");
   const textOf = (target: TodayTarget) => textEdits[target.customerId] ?? target.draft;
   // A sent customer leaves the list at once; the server keeps them out for
   // 14 days and the refresh brings in the next customers.
@@ -116,7 +120,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
         await postJson("/api/sms/pattern", {
           pattern: "followup",
           customerId: target.customerId,
-          values: { name: target.name.slice(0, 40), contact: contact.trim() },
+          values: { name: target.greeting.slice(0, 40), contact: contact.trim() },
           clientRequestId: requestIds.current[target.customerId],
         });
       } else {
@@ -268,7 +272,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
 
             {channel === "pattern" ? (
               <p className={styles.preview}>
-                {target.name} گرامی، موعد سفارش مجدد لوازم مصرفی شما فرا رسیده است. برای ثبت سفارش با شماره{" "}
+                {target.greeting.slice(0, 40)} گرامی، موعد سفارش مجدد لوازم مصرفی شما فرا رسیده است. برای ثبت سفارش با شماره{" "}
                 {contact || "…"} تماس بگیرید.
                 <br />
                 omidmed.com
