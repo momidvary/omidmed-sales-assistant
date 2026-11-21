@@ -12,8 +12,20 @@ export type ItemPurchase = {
 export type ReorderUnit = {
   label: string;
   leadDays?: number;
+  reorderAt?: number;
+  stockCounts?: { date: string; quantity: number }[];
   parts: { quantity: number; keys: string[] }[];
 };
+
+function isQuantity(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isStockDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + "T00:00:00Z");
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 
 export function isReorderUnit(value: unknown): value is ReorderUnit {
   if (!value || typeof value !== "object") return false;
@@ -21,6 +33,15 @@ export function isReorderUnit(value: unknown): value is ReorderUnit {
   if (typeof unit.label !== "string" || !unit.label.trim() || unit.label.length > 120 ||
       !Array.isArray(unit.parts) || !unit.parts.length || unit.parts.length > 30) return false;
   if (unit.leadDays !== undefined && (!Number.isInteger(unit.leadDays) || unit.leadDays < 0 || unit.leadDays > 365)) return false;
+  if (unit.reorderAt !== undefined && !isQuantity(unit.reorderAt)) return false;
+  if (unit.stockCounts !== undefined) {
+    if (!Array.isArray(unit.stockCounts)) return false;
+    const dates = new Set<string>();
+    for (const count of unit.stockCounts) {
+      if (!count || !isQuantity(count.quantity) || !isStockDate(count.date) || dates.has(count.date)) return false;
+      dates.add(count.date);
+    }
+  }
   const seen = new Set<string>();
   for (const part of unit.parts) {
     if (!part || !Number.isFinite(part.quantity) || part.quantity <= 0 ||

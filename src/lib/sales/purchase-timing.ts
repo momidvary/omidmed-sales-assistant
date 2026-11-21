@@ -1,7 +1,7 @@
 // Predicts when a customer will need to buy again. Pure: callers pass the
 // customer's invoice dates and line items.
 //
-// Two estimates, the more specific one wins:
+// Customer stock counts and a known reorder point take precedence over:
 // - product run-out: from how much of a product they buy and how fast it is
 //   used up (a double order lasts twice as long);
 // - purchase cycle: the median gap between purchase days, which one unusual
@@ -23,7 +23,7 @@ const STALE_PRODUCT_DAYS = 180;
 /** Share of a product's interval an order may come early without it. */
 const RUN_OUT_GRACE = 0.15;
 
-export type NeedBasis = "product" | "cycle" | "single";
+export type NeedBasis = "stock" | "product" | "cycle" | "single";
 
 export type NeedPrediction = {
   basis: NeedBasis;
@@ -40,6 +40,7 @@ export type NeedPrediction = {
   intervals?: number;
   errorDays?: number | null;
   leadDays?: number;
+  reorderAt?: number;
 };
 
 function dayIndex(date: string) {
@@ -72,6 +73,48 @@ export function purchaseCycle(invoiceDates: string[]) {
 }
 
 type Order = [day: number, quantity: number];
+
+function stockTiming(unit: ReorderUnit, orders: Order[], today: number): NeedPrediction | null {
+  const threshold = unit.reorderAt;
+  if (threshold === undefined || !unit.stockCounts?.length) return null;
+  const counts = unit.stockCounts.map(count => ({ day: dayIndex(count.date), quantity: count.quantity }))
+    .filter(count => count.day <= today).sort((a, b) => a.day - b.day);
+  const latest = counts.at(-1);
+  if (!latest) return null;
+  const previous = counts.at(-2);
+  const receipts = orders.filter(([day]) => day > latest.day);
+  let dueDay = latest.day;
+  let fromDay = latest.day;
+
+  // A count at/below the threshold is actionable even without a known rate.
+  if (latest.quantity > threshold || receipts.length) {
+    if (!previous) return null;
+    const span = latest.day - previous.day;
+    // Counts include all receipts on the count day.
+    const received = orders.reduce((sum, [day, qty]) =>
+      day > previous.day && day <= latest.day ? sum + qty : sum, 0);
+    const used = previous.quantity + received - latest.quantity;
+    if (used <= 0) return null;
+    // Keep the rate as a fraction to avoid rounding a whole-day forecast up a day.
+    let balanceTimesSpan = latest.quantity * span;
+    let balanceDay = latest.day;
+    for (const [day, quantity] of receipts) {
+      balanceTimesSpan = Math.max(0, balanceTimesSpan - (day - balanceDay) * used) + quantity * span;
+      balanceDay = day;
+    }
+    const remaining = Math.max(0, balanceTimesSpan - threshold * span);
+    dueDay = balanceDay + Math.ceil(remaining / used);
+    if (!Number.isFinite(new Date(dueDay * DAY_MS).getTime())) return null;
+    fromDay = receipts.length ? balanceDay : previous.day;
+  }
+  const intervalDays = Math.max(1, dueDay - fromDay);
+  const daysToDue = dueDay - today;
+  return {
+    basis: "stock", intervalDays, daysToDue, progress: 1 - daysToDue / intervalDays,
+    daysSinceLast: today - fromDay, regular: false, product: unit.label,
+    reorderAt: threshold, leadDays: unit.leadDays ?? 7,
+  };
+}
 
 function intervalFor(orders: Order[]) {
   const quantity = orders[orders.length - 1][1];
@@ -154,11 +197,7 @@ export function predictNeed(input: {
   const asOf = tehranDateKey(input.now);
   const invoiceDates = input.invoiceDates.filter(date => date <= asOf);
   const items = input.items.filter(item => item.date <= asOf);
-  if (!invoiceDates.length) return null;
   const today = dayIndex(asOf);
-  const lastDate = invoiceDates.reduce((latest, date) => date > latest ? date : latest);
-  const lastDay = dayIndex(lastDate);
-  const cycle = purchaseCycle(invoiceDates);
 
   const build = (basis: NeedBasis, fromDay: number, intervalDays: number, regular: boolean, product: string | null) => {
     const daysSinceLast = today - fromDay;
@@ -176,6 +215,8 @@ export function predictNeed(input: {
   if (input.unit) {
     const quantities = unitOrders(identifyProducts(items), input.unit);
     const orders: Order[] = [...quantities].map(([date, qty]): Order => [dayIndex(date), qty]).sort((a, b) => a[0] - b[0]);
+    const stock = stockTiming(input.unit, orders, today);
+    if (stock) return stock;
     if (orders.length < 2) return null;
     const estimate = intervalFor(orders);
     return {
@@ -185,6 +226,10 @@ export function predictNeed(input: {
       leadDays: Math.min(input.unit.leadDays ?? 7, estimate.intervalDays - 1),
     };
   }
+  if (!invoiceDates.length) return null;
+  const lastDate = invoiceDates.reduce((latest, date) => date > latest ? date : latest);
+  const lastDay = dayIndex(lastDate);
+  const cycle = purchaseCycle(invoiceDates);
   const runOut = items.length ? productRunOut(items, lastDate) : null;
   // A product bought three or more times is the most specific signal; one
   // bought twice still beats a cycle built from a single gap.
@@ -208,6 +253,7 @@ export function timingSignal(prediction: NeedPrediction) {
   const { progress, basis, regular } = prediction;
   const tooEarly = prediction.leadDays == null ? progress < 0.85 : prediction.daysToDue > prediction.leadDays;
   if (tooEarly) return null;
+  if (basis === "stock") return { kind: "reorder" as const, points: 35 };
   const confidence = basis === "single" ? 0.6 : regular ? 1 : 0.75;
   if (progress >= 2 && basis !== "single") return { kind: "winback" as const, points: Math.round(30 * confidence) };
   const points = progress < 1 ? 35 : progress < 1.5 ? 30 : 22;
@@ -225,6 +271,9 @@ export function timingReason(prediction: NeedPrediction) {
       : daysToDue === 0
         ? "همین روزها"
         : `حدود ${persianNumber.format(-daysToDue)} روز پیش`;
+  if (basis === "stock") {
+    return `موعد تقریبی سفارش ${product} ${when}، بر اساس موجودی گزارش‌شده و آستانهٔ سفارش ${persianNumber.format(prediction.reorderAt!)}`;
+  }
   if (basis === "product") {
     const error = prediction.errorDays == null ? "" : `؛ میانهٔ خطای پیش‌بینی‌های قبلی ${persianNumber.format(prediction.errorDays)} روز`;
     const evidence = prediction.intervals ? ` (بر اساس ${persianNumber.format(prediction.intervals)} فاصلهٔ خرید)` : "";

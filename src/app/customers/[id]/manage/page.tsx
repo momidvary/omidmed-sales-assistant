@@ -23,7 +23,7 @@ const statusLabels: Record<string, string> = {
 };
 
 const errorMessages: Record<string, string> = {
-  unit: "عنوان، تعداد و کالاهای هر جزء را بررسی کنید. هر کالا فقط در یک جزء قابل انتخاب است.",
+  unit: "تنظیمات الگوی خرید را بررسی کنید. هر کالا باید در یک جزء باشد. تاریخ شمارش موجودی باید معتبر، تا امروز و بدون تکرار باشد.",
   required: "نام مشتری و اطلاعات ضروری را بررسی کن.",
   duplicate:
     "این شماره موبایل برای مشتری دیگری ثبت شده است.",
@@ -114,11 +114,13 @@ export default async function ManageCustomerPage({
   const rawUnit = setting.data?.reorder_unit;
   const unit = isReorderUnit(rawUnit) ? rawUnit : null;
   const now = new Date();
+  const today = tehranDateKey(now);
   const prediction = predictNeed({ invoiceDates: [...dates.values()], items, unit, now });
-  const forecast = prediction ? timingReason(prediction) + " · " +
-    new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeZone: "UTC" }).format(
-      new Date(Date.parse(tehranDateKey(now)) + prediction.daysToDue * 86_400_000)) :
-    "برای برآورد این الگو هنوز سابقهٔ خرید کافی ثبت نشده است.";
+  const forecastDate = (offset: number) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeZone: "UTC" })
+    .format(new Date(Date.parse(today) + offset * 86_400_000));
+  const forecast = prediction ? timingReason(prediction) + " · " + forecastDate(prediction.daysToDue) +
+    (prediction.leadDays === undefined ? "" : " · شروع پیگیری از " + forecastDate(prediction.daysToDue - prediction.leadDays)) :
+    "برای برآورد این الگو به سابقهٔ خرید یا شمارش موجودی بیشتری نیاز است.";
   const errorMessage = query.error
     ? errorMessages[query.error] ??
       "عملیات انجام نشد."
@@ -364,7 +366,7 @@ export default async function ManageCustomerPage({
       {setting.error || invoices.error || lines.error ? (
         <p className={styles.error}>تنظیمات پیش‌بینی یا سابقهٔ اقلام خوانده نشد. اتصال و اجرای به‌روزرسانی ۰۲۹ را بررسی کنید.</p>
       ) : (
-        <ReorderForm key={JSON.stringify(unit)} customerId={id} initial={unit}
+        <ReorderForm key={JSON.stringify(unit)} customerId={id} initial={unit} today={today}
           options={[...options].sort((a, b) => a[1].localeCompare(b[1], "fa"))} forecast={forecast} />
       )}
 
