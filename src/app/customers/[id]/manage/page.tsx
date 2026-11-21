@@ -1,3 +1,8 @@
+import { tehranDateKey } from "@/lib/finance/metrics";
+import { ReorderForm } from "./reorder-form";
+import { readHistory } from "@/lib/supabase/read-history";
+import { identifyProducts, isReorderUnit, type ItemPurchase } from "@/lib/sales/reorder-unit";
+import { predictNeed, timingReason } from "@/lib/sales/purchase-timing";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AppShell from "@/components/app-shell";
@@ -18,6 +23,7 @@ const statusLabels: Record<string, string> = {
 };
 
 const errorMessages: Record<string, string> = {
+  unit: "تنظیمات الگوی خرید را بررسی کنید. هر کالا باید در یک جزء باشد. تاریخ شمارش موجودی باید معتبر، تا امروز و بدون تکرار باشد.",
   required: "نام مشتری و اطلاعات ضروری را بررسی کن.",
   duplicate:
     "این شماره موبایل برای مشتری دیگری ثبت شده است.",
@@ -87,6 +93,34 @@ export default async function ManageCustomerPage({
     notFound();
   }
 
+  const [setting, invoices, lines] = await Promise.all([
+    supabase.from("customers").select("reorder_unit").eq("id", id).single(),
+    readHistory<{ id: string; invoice_date: string }>((from, to) => supabase.from("invoices")
+      .select("id,invoice_date").eq("customer_id", id).or("holo_is_deleted.is.null,holo_is_deleted.eq.false")
+      .order("id").range(from, to)),
+    readHistory<{ invoice_id: string; product_name: string; quantity: number; holo_article_code: string | null }>(
+      (from, to) => supabase.from("invoice_items").select("invoice_id,product_name,quantity,holo_article_code,invoices!inner(customer_id)")
+        .eq("invoices.customer_id", id).order("id").range(from, to)),
+  ]);
+  const dates = new Map(invoices.rows.map(row => [row.id, row.invoice_date]));
+  const items: ItemPurchase[] = lines.rows.flatMap(row => {
+    const date = dates.get(row.invoice_id);
+    return date ? [{ date, invoiceId: row.invoice_id, product: row.product_name, articleCode: row.holo_article_code, quantity: Number(row.quantity) }] : [];
+  });
+  const options = new Map<string, string>();
+  for (const item of identifyProducts(items)) {
+    options.set(item.key, item.key.startsWith("sku:") ? `${item.product} (${item.key.slice(4)})` : item.product);
+  }
+  const rawUnit = setting.data?.reorder_unit;
+  const unit = isReorderUnit(rawUnit) ? rawUnit : null;
+  const now = new Date();
+  const today = tehranDateKey(now);
+  const prediction = predictNeed({ invoiceDates: [...dates.values()], items, unit, now });
+  const forecastDate = (offset: number) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeZone: "UTC" })
+    .format(new Date(Date.parse(today) + offset * 86_400_000));
+  const forecast = prediction ? timingReason(prediction) + " · " + forecastDate(prediction.daysToDue) +
+    (prediction.leadDays === undefined ? "" : " · شروع پیگیری از " + forecastDate(prediction.daysToDue - prediction.leadDays)) :
+    "برای برآورد این الگو به سابقهٔ خرید یا شمارش موجودی بیشتری نیاز است.";
   const errorMessage = query.error
     ? errorMessages[query.error] ??
       "عملیات انجام نشد."
@@ -328,6 +362,13 @@ export default async function ManageCustomerPage({
           <button type="submit">ذخیره تغییرات</button>
         </div>
       </form>
+
+      {setting.error || invoices.error || lines.error ? (
+        <p className={styles.error}>تنظیمات پیش‌بینی یا سابقهٔ اقلام خوانده نشد. اتصال و اجرای به‌روزرسانی ۰۲۹ را بررسی کنید.</p>
+      ) : (
+        <ReorderForm key={JSON.stringify(unit)} customerId={id} initial={unit} today={today}
+          options={[...options].sort((a, b) => a[1].localeCompare(b[1], "fa"))} forecast={forecast} />
+      )}
 
       <section className={styles.managementCard}>
         <div>

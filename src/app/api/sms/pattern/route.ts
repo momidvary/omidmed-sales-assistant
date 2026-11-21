@@ -142,7 +142,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await sendPatternSms({ bodyId, to: mobile, args: parsed.args });
-    await supabase
+    const { error: logError } = await supabase
       .from("sms_messages")
       .update({
         provider_rec_id: result.recId,
@@ -152,11 +152,17 @@ export async function POST(request: Request) {
         error_message: result.success ? null : result.status,
         sent_at: new Date().toISOString(),
       })
-      .eq("id", pending.id);
+      .eq("id", pending.id)
+      .select("id")
+      .single();
 
     return NextResponse.json(
       result.success
-        ? { success: true, recId: result.recId }
+        ? {
+            success: true,
+            recId: result.recId,
+            warning: logError ? "پیام به سرویس ارسال شد، اما ثبت سابقه در برنامه انجام نشد." : undefined,
+          }
         : { error: `ملی پیامک ارسال را نپذیرفت: ${result.status}` },
       { status: result.success ? 200 : 502 },
     );

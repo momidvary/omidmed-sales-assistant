@@ -24,44 +24,46 @@ export default async function TodaySmsPage({
     ? Math.min(MAX_LIMIT, Math.max(DAILY_SMS_TARGETS, requested))
     : DAILY_SMS_TARGETS;
   const supabase = await createClient();
-  const { items, candidates, skipped, failed } = await loadTodayTargets(supabase, limit);
+  const { items, candidates, skipped, unavailableReason } = await loadTodayTargets(supabase, limit);
 
   return (
     <AppShell active="sms-today" title="پیامک‌های امروز" subtitle="مشتری‌هایی که امروز ارزش پیام دادن دارند">
       <section className={styles.hero}>
         <div>
           <span>فروش و بازاریابی</span>
-          <h2>{number.format(items.length)} مشتری برای پیامک امروز</h2>
-          <p>
-            از بین {number.format(candidates)} مشتری که امروز دلیلی برای پیام دارند، {number.format(items.length)} نفر با
-            بیشترین امتیاز آمده‌اند. امتیاز از موعد خرید، کم شدن خرید، قیمت گرفتن، ارزش مشتری و پیگیری‌های شما ساخته
-            می‌شود. بدهکاری هلو در آن حساب نمی‌شود.
-          </p>
+          <h2>{unavailableReason ? "فهرست پیشنهادهای پیامک" : `${number.format(items.length)} مشتری برای پیامک امروز`}</h2>
+          {!unavailableReason && (
+            <p>
+              از بین {number.format(candidates)} مشتری که امروز دلیلی برای پیام دارند، {number.format(items.length)} نفر با
+              بیشترین امتیاز آمده‌اند. امتیاز از موعد خرید، کم شدن خرید، قیمت گرفتن، ارزش مشتری و پیگیری‌های شما ساخته
+              می‌شود. بدهکاری هلو در آن حساب نمی‌شود.
+            </p>
+          )}
         </div>
         <Link href="/sms" className={styles.ready}>
           تاریخچه پیامک‌ها
         </Link>
       </section>
 
-      {failed ? <p className={todayStyles.hint}>اطلاعات مشتری‌ها کامل خوانده نشد؛ صفحه را دوباره باز کنید.</p> : null}
+      {!unavailableReason && (
+        <p className={todayStyles.hint}>
+          کنار گذاشته شده‌ها:{" "}
+          {[
+            [
+              "پیامک اخیر",
+              `پیامک در ${number.format(SMS_COOLDOWN_DAYS)} روز اخیر (مشتری دورشده: ${number.format(WINBACK_COOLDOWN_DAYS)} روز)`,
+            ],
+            ["تماس اخیر", "تماس در هفته اخیر"],
+            ["موبایل ندارد", "بدون موبایل معتبر"],
+            ["از دست رفته", "از دست رفته"],
+            ["شماره تکراری", "شماره تکراری در چند مشتری"],
+          ]
+            .map(([key, label]) => `${label}: ${number.format(skipped[key] ?? 0)}`)
+            .join(" · ")}
+        </p>
+      )}
 
-      <p className={todayStyles.hint}>
-        کنار گذاشته شده‌ها:{" "}
-        {[
-          [
-            "پیامک اخیر",
-            `پیامک در ${number.format(SMS_COOLDOWN_DAYS)} روز اخیر (مشتری دورشده: ${number.format(WINBACK_COOLDOWN_DAYS)} روز)`,
-          ],
-          ["تماس اخیر", "تماس در هفته اخیر"],
-          ["موبایل ندارد", "بدون موبایل معتبر"],
-          ["از دست رفته", "از دست رفته"],
-          ["شماره تکراری", "شماره تکراری در چند مشتری"],
-        ]
-          .map(([key, label]) => `${label}: ${number.format(skipped[key] ?? 0)}`)
-          .join(" · ")}
-      </p>
-
-      <TodaySmsList targets={items} />
+      <TodaySmsList targets={items} unavailableReason={unavailableReason} />
 
       {candidates > items.length && limit < MAX_LIMIT ? (
         <Link className={todayStyles.more} href={`/sms/today?limit=${Math.min(MAX_LIMIT, limit + DAILY_SMS_TARGETS)}`}>

@@ -362,8 +362,8 @@ export default async function Home({
         <Link className={styles.taskCard} href="/sms/today">
           <span className={styles.taskStep}>۱</span>
           <div>
-            <strong>{number.format(smsTargets.items.length)} پیامک</strong>
-            <span>پیامک‌های امروز را بررسی و ارسال کنید</span>
+            <strong>{smsTargets.unavailableReason ? "پیامک‌های امروز" : `${number.format(smsTargets.items.length)} پیامک`}</strong>
+            <span>{smsTargets.unavailableReason ? "فهرست در دسترس نیست" : "پیامک‌های امروز را بررسی و ارسال کنید"}</span>
           </div>
         </Link>
 

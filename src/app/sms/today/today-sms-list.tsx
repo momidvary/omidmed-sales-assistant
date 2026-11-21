@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import styles from "./today.module.css";
 
@@ -65,8 +65,15 @@ async function postJson(url: string, body: unknown) {
   return data;
 }
 
-export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
+export default function TodaySmsList({
+  targets,
+  unavailableReason,
+}: {
+  targets: TodayTarget[];
+  unavailableReason: string | null;
+}) {
   const router = useRouter();
+  const [refreshing, startRefresh] = useTransition();
   const [contact, setContact] = useState("");
   // Only the user's changes are kept here; customers that arrive after a
   // refresh start from their own defaults.
@@ -74,6 +81,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
   const [textEdits, setTexts] = useState<Record<string, string>>({});
   const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set());
   const [sent, setSent] = useState<Set<string>>(() => new Set());
+  const [historyWarning, setHistoryWarning] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, Result>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [ai, setAi] = useState<Record<string, AiSuggestion[] | "loading" | string>>({});
@@ -85,20 +93,48 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
     setContact(readContact());
   }, []);
 
+  useEffect(() => {
+    function refreshOnReturn() {
+      if (document.visibilityState === "visible") startRefresh(() => router.refresh());
+    }
+
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => document.removeEventListener("visibilitychange", refreshOnReturn);
+  }, [router]);
+
   const channelOf = (target: TodayTarget): Channel =>
     // A customer who stopped buying gets the personal "we miss you" text;
     // the reorder pattern ("time to reorder") fits the ones who are due.
     channelChoice[target.customerId] ?? (target.patternAllowed && target.kind !== "winback" ? "pattern" : "text");
   const textOf = (target: TodayTarget) => textEdits[target.customerId] ?? target.draft;
-  // A sent customer leaves the list at once; the server keeps them out for
-  // 14 days and the refresh brings in the next customers.
+  // Hide immediately while the server recalculates and fills the open slots.
   const visible = targets.filter((target) => !sent.has(target.customerId));
+  const refreshButton = (
+    <button
+      type="button"
+      className={styles.secondary}
+      disabled={Boolean(busy) || refreshing}
+      onClick={() => startRefresh(() => router.refresh())}
+    >
+      {refreshing ? "در حال به‌روزرسانی…" : "به‌روزرسانی فهرست"}
+    </button>
+  );
+  const sendFeedback = (
+    <>
+      {sent.size > 0 && <p className={styles.sentNote} role="status">{number.format(sent.size)} پیامک در این صفحه به سرویس ارسال شد.</p>}
+      {historyWarning && <p className={styles.error} role="alert">{historyWarning}</p>}
+    </>
+  );
 
   if (!visible.length) {
     return (
-      <div className={styles.empty}>
-        <h3>امروز مشتری‌ای نیاز به پیامک ندارد</h3>
-        <p>همه کسانی که دلیلی برای پیام داشتند اخیراً پیامک یا تماس گرفته‌اند.</p>
+      <div className={styles.wrap}>
+        {sendFeedback}
+        <div className={styles.empty}>
+          <h3>{unavailableReason ? "فهرست پیامک در دسترس نیست" : "پیشنهاد دیگری برای پیامک وجود ندارد"}</h3>
+          {unavailableReason && <p className={styles.error} role="alert">{unavailableReason}</p>}
+          {refreshButton}
+        </div>
       </div>
     );
   }
@@ -116,8 +152,9 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
     }
     requestIds.current[target.customerId] ??= crypto.randomUUID();
     try {
+      let reply;
       if (channel === "pattern") {
-        await postJson("/api/sms/pattern", {
+        reply = await postJson("/api/sms/pattern", {
           pattern: "followup",
           customerId: target.customerId,
           values: { name: target.greeting.slice(0, 40), contact: contact.trim() },
@@ -126,7 +163,7 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
       } else {
         const text = finalText(target).trim();
         if (!text) throw new Error("متن پیامک خالی است.");
-        await postJson("/api/sms/send", {
+        reply = await postJson("/api/sms/send", {
           customerId: target.customerId,
           text,
           source: "customer",
@@ -135,6 +172,8 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
           clientRequestId: requestIds.current[target.customerId],
         });
       }
+      if (reply.success !== true) throw new Error("پذیرش پیامک از سمت سرویس تأیید نشد.");
+      if (typeof reply.warning === "string") setHistoryWarning(reply.warning);
       delete requestIds.current[target.customerId];
       setSent((current) => new Set(current).add(target.customerId));
       return true;
@@ -202,17 +241,13 @@ export default function TodaySmsList({ targets }: { targets: TodayTarget[] }) {
             }}
           />
         </label>
+        {refreshButton}
         <button type="button" className={styles.primary} disabled={Boolean(busy) || !pendingSelected} onClick={sendSelected}>
           {busy === "all" ? "در حال ارسال…" : `ارسال برای ${number.format(pendingSelected)} نفر انتخاب‌شده`}
         </button>
       </div>
 
-      {sent.size ? (
-        <p className={styles.sentNote}>
-          {number.format(sent.size)} پیامک ارسال شد؛ این مشتری‌ها تا ۱۴ روز در فهرست نمی‌آیند و نفرات بعدی جایشان را
-          می‌گیرند.
-        </p>
-      ) : null}
+      {sendFeedback}
 
       {visible.map((target) => {
         const channel = channelOf(target);

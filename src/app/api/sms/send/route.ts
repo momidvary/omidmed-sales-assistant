@@ -244,7 +244,9 @@ export async function POST(request: Request) {
         : rejectionMessage,
       sent_at: new Date().toISOString(),
     })
-    .eq("id", pending.id);
+    .eq("id", pending.id)
+    .select("id")
+    .single();
 
   if (logError) {
     return NextResponse.json(

@@ -152,6 +152,76 @@ test("today's SMS list drops sent customers and refreshes to bring in the next o
   assert.match(load, /newerTwin\(customer\) \? "شماره تکراری"/, "an older record sharing a mobile with a newer buyer is left out");
 });
 
+test("today's SMS list backfills after sending and keeps recipients out on the next day", async () => {
+  const { loadTodayTargets } = await import("../src/app/sms/today/load");
+  const customers = Array.from({ length: 23 }, (_, index) => ({
+    ...base,
+    id: `customer-${index}`,
+    phone: `091200000${String(index).padStart(2, "0")}`,
+    next_followup_at: daysAgo(2),
+    last_purchase_at: null,
+    total_sales: 100_000 - index,
+  }));
+  const history: Array<{
+    customer_id: string | null;
+    recipient: string;
+    created_at: string;
+    sent_at: string | null;
+    request_success: boolean;
+    delivery_status: string;
+  }> = [];
+  let historyReadFails = false;
+  const supabase = {
+    from(table: string) {
+      const rows = table === "customer_crm_summary" ? customers : table === "sms_messages" ? history : [];
+      return {
+        select() { return this; },
+        or() { return this; },
+        gte() { return this; },
+        in() { return this; },
+        not() { return this; },
+        order() { return this; },
+        limit() { return this; },
+        async maybeSingle() { return { data: null, error: null }; },
+        async range(from: number, to: number) {
+          if (table === "sms_messages" && historyReadFails) return { data: null, error: new Error("read failed") };
+          return { data: rows.slice(from, to + 1), error: null };
+        },
+      };
+    },
+  } as unknown as Parameters<typeof loadTodayTargets>[0];
+
+  const initial = await loadTodayTargets(supabase, 20, now);
+  assert.deepEqual(initial.items.map(({ customerId }) => customerId), customers.slice(0, 20).map(({ id }) => id));
+
+  history.push(
+    {
+      customer_id: null, recipient: "+98 912 000 0000", created_at: daysAgo(15), sent_at: now.toISOString(),
+      request_success: true, delivery_status: "accepted",
+    },
+    {
+      customer_id: customers[1].id, recipient: "09121111111", created_at: now.toISOString(), sent_at: null,
+      request_success: false, delivery_status: "unknown",
+    },
+    {
+      customer_id: customers[2].id, recipient: customers[2].phone, created_at: now.toISOString(), sent_at: now.toISOString(),
+      request_success: false, delivery_status: "rejected",
+    },
+  );
+  const expectedIds = customers.slice(2, 22).map(({ id }) => id);
+  const afterSend = await loadTodayTargets(supabase, 20, now);
+  assert.deepEqual(afterSend.items.map(({ customerId }) => customerId), expectedIds);
+
+  const tomorrow = new Date(now.getTime() + 86_400_000);
+  const afterReload = await loadTodayTargets(supabase, 20, tomorrow);
+  assert.deepEqual(afterReload.items.map(({ customerId }) => customerId), expectedIds);
+
+  historyReadFails = true;
+  const unavailable = await loadTodayTargets(supabase, 20, tomorrow);
+  assert.match(unavailable.unavailableReason ?? "", /سابقهٔ پیامک/);
+  assert.deepEqual(unavailable.items, []);
+});
+
 test("one mobile on two customer records gets one message; Arabic letters become Persian", async () => {
   const due = { ...base, days_since_last_purchase: 36 };
   const first = scoreSmsTarget({ ...due, id: "a", total_sales: 300_000_000 }, quiet, context)!;

@@ -1,3 +1,4 @@
+import { readHistory } from "@/lib/supabase/read-history";
 import { loadUnsettledInvoices } from "@/app/accounting/invoice-data";
 import { latestContactByCustomer } from "@/lib/sales/followup-need";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@/lib/sales/sms-targets";
 import { normalizeIranMobile } from "@/lib/sms/melipayamak";
 import { predictNeed, type ItemPurchase, type NeedPrediction } from "@/lib/sales/purchase-timing";
+import { isReorderUnit, type ReorderUnit } from "@/lib/sales/reorder-unit";
 import { smsGreetingName } from "@/lib/sms/greeting";
 import { configuredPatterns } from "@/lib/sms/patterns";
 import type { createClient } from "@/lib/supabase/server";
@@ -36,22 +38,11 @@ const later = (a: string | undefined, b: string | undefined) => (a && b ? (a > b
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
-/** Reads every page of a query; PostgREST returns at most 1000 rows at a time. */
-async function readAll<T>(query: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>) {
-  const rows: T[] = [];
-  for (let offset = 0; offset < 50_000; offset += 1000) {
-    const { data, error } = await query(offset, offset + 999);
-    if (error) return { rows, error: true };
-    rows.push(...((data ?? []) as T[]));
-    if ((data ?? []).length < 1000) break;
-  }
-  return { rows, error: false };
-}
-
 async function loadSignals(supabase: Supabase, now: Date) {
   const since = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
-  const [customers, invoices, invoiceItems, products, followups, sms, quotes, unsettled] = await Promise.all([
-    readAll<TargetCustomer & { last_purchase_at: string | null }>((from, to) =>
+  const smsSince = since(WINBACK_COOLDOWN_DAYS);
+  const [customers, invoices, invoiceItems, products, followups, sms, quotes, units, unsettled] = await Promise.all([
+    readHistory<TargetCustomer & { last_purchase_at: string | null }>((from, to) =>
       supabase
         .from("customer_crm_summary")
         .select(
@@ -61,7 +52,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
         .range(from, to),
     ),
     // All invoices: purchase cycles and run-out dates need the full history.
-    readAll<{ id: string; customer_id: string; invoice_date: string; total_amount: number | string }>((from, to) =>
+    readHistory<{ id: string; customer_id: string; invoice_date: string; total_amount: number | string }>((from, to) =>
       supabase
         .from("invoices")
         .select("id,customer_id,invoice_date,total_amount")
@@ -69,14 +60,14 @@ async function loadSignals(supabase: Supabase, now: Date) {
         .order("id")
         .range(from, to),
     ),
-    readAll<{ invoice_id: string; product_name: string | null; quantity: number | string | null }>((from, to) =>
+    readHistory<{ invoice_id: string; holo_article_code: string | null; product_name: string | null; quantity: number | string | null }>((from, to) =>
       supabase
         .from("invoice_items")
-        .select("invoice_id,product_name,quantity")
+        .select("invoice_id,product_name,holo_article_code,quantity")
         .order("id")
         .range(from, to),
     ),
-    readAll<{ customer_id: string; product_name: string; invoice_count: number; last_purchase_at: string | null }>(
+    readHistory<{ customer_id: string; product_name: string; invoice_count: number; last_purchase_at: string | null }>(
       (from, to) =>
         supabase
           .from("customer_product_summary")
@@ -85,7 +76,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
           .order("product_name")
           .range(from, to),
     ),
-    readAll<{ customer_id: string; followup_at: string; outcome: string }>((from, to) =>
+    readHistory<{ customer_id: string; followup_at: string; outcome: string }>((from, to) =>
       supabase
         .from("followups")
         .select("customer_id,followup_at,outcome")
@@ -94,27 +85,31 @@ async function loadSignals(supabase: Supabase, now: Date) {
         .order("id")
         .range(from, to),
     ),
-    readAll<{
+    readHistory<{
       customer_id: string | null;
       recipient: string;
       created_at: string;
+      sent_at: string | null;
       request_success: boolean;
       delivery_status: string | null;
     }>((from, to) =>
       supabase
         .from("sms_messages")
-        .select("customer_id,recipient,created_at,request_success,delivery_status")
-        .gte("created_at", since(WINBACK_COOLDOWN_DAYS))
+        .select("customer_id,recipient,created_at,sent_at,request_success,delivery_status")
+        .or(`sent_at.gte.${smsSince},and(sent_at.is.null,created_at.gte.${smsSince})`)
         .order("id")
         .range(from, to),
     ),
-    readAll<{ customer_id: string }>((from, to) =>
+    readHistory<{ customer_id: string }>((from, to) =>
       supabase
         .from("sales_opportunities")
         .select("customer_id")
         .in("status", ["open", "on_hold"])
         .order("id")
         .range(from, to),
+    ),
+    readHistory<{ id: string; reorder_unit: ReorderUnit }>((from, to) =>
+      supabase.from("customers").select("id,reorder_unit").not("reorder_unit", "is", null).order("id").range(from, to),
     ),
     loadUnsettledInvoices(supabase).catch(() => null),
   ]);
@@ -130,8 +125,9 @@ async function loadSignals(supabase: Supabase, now: Date) {
   };
   for (const row of sms.rows) {
     if (!row.request_success && row.delivery_status !== "unknown") continue;
-    keep(row.customer_id, row.created_at);
-    keep(mobileKey(row.recipient), row.created_at);
+    const at = row.sent_at ?? row.created_at;
+    keep(row.customer_id, at);
+    keep(mobileKey(row.recipient), at);
   }
 
   const latestOutcome = new Map<string, { at: string; outcome: string }>();
@@ -143,26 +139,33 @@ async function loadSignals(supabase: Supabase, now: Date) {
   const invoiceById = new Map(invoices.rows.map((invoice) => [invoice.id, invoice]));
   const datesByCustomer = new Map<string, string[]>();
   for (const invoice of invoices.rows) {
-    datesByCustomer.set(invoice.customer_id, [...(datesByCustomer.get(invoice.customer_id) ?? []), invoice.invoice_date]);
+    const dates = datesByCustomer.get(invoice.customer_id) ?? [];
+    dates.push(invoice.invoice_date);
+    datesByCustomer.set(invoice.customer_id, dates);
   }
   const itemsByCustomer = new Map<string, ItemPurchase[]>();
   for (const item of invoiceItems.rows) {
     const invoice = invoiceById.get(item.invoice_id);
     if (!invoice || !item.product_name) continue;
     const list = itemsByCustomer.get(invoice.customer_id) ?? [];
-    list.push({ date: invoice.invoice_date, product: item.product_name, quantity: Number(item.quantity ?? 0) });
+    list.push({ invoiceId: item.invoice_id, articleCode: item.holo_article_code, date: invoice.invoice_date, product: item.product_name, quantity: Number(item.quantity ?? 0) });
     itemsByCustomer.set(invoice.customer_id, list);
   }
   const timing = new Map<string, NeedPrediction | null>();
   // Without the invoice history the scorer falls back to the summary view.
-  if (!invoices.error) {
-    for (const customer of customers.rows) {
+  const profiles = new Map(units.rows.map(row => [row.id, row.reorder_unit]));
+  for (const customer of customers.rows) {
+    const unit = profiles.get(customer.id);
+    if (unit && (!isReorderUnit(unit) || invoiceItems.error || invoices.error)) {
+      timing.set(customer.id, null);
+    } else if (!invoices.error) {
       timing.set(
         customer.id,
         predictNeed({
           invoiceDates: datesByCustomer.get(customer.id) ?? [],
           items: invoiceItems.error ? [] : itemsByCustomer.get(customer.id) ?? [],
           now,
+          unit,
         }),
       );
     }
@@ -171,6 +174,9 @@ async function loadSignals(supabase: Supabase, now: Date) {
   return {
     customers: customers.rows,
     failed: customers.error,
+    // Before migration 029 every customer uses the automatic product forecast.
+    profilesUnavailable: units.error && units.code !== "42703" && units.code !== "PGRST204",
+    smsHistoryUnavailable: sms.error,
     trend: salesTrend(invoices.rows, now),
     timing,
     rfm: invoices.error ? null : rfmScores(invoices.rows, now),
@@ -183,8 +189,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
   };
 }
 
-export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TARGETS) {
-  const now = new Date();
+export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TARGETS, now = new Date()) {
   const data = await loadSignals(supabase, now);
   const thresholds = salesThresholds(data.customers);
 
@@ -249,9 +254,19 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     return null;
   });
 
-  const unique = rankSmsTargets(scored, Infinity, mobileKey);
-  const duplicates = scored.filter(Boolean).length - unique.length;
-  if (duplicates) skipped["شماره تکراری"] = duplicates;
+  // A partial history can make a previously messaged customer look eligible.
+  const unavailableReason = data.smsHistoryUnavailable
+    ? "سابقهٔ پیامک‌ها کامل خوانده نشد. فهرست را دوباره به‌روز کنید."
+    : data.profilesUnavailable
+      ? "تنظیمات الگوی خرید خوانده نشد. وضعیت اتصال و اجرای به‌روزرسانی ۰۲۹ پایگاه داده را بررسی کنید."
+    : data.failed
+      ? "اطلاعات مشتری‌ها کامل خوانده نشد. فهرست را دوباره به‌روز کنید."
+      : null;
+  const unique = unavailableReason ? [] : rankSmsTargets(scored, Infinity, mobileKey);
+  if (!unavailableReason) {
+    const duplicates = scored.filter(Boolean).length - unique.length;
+    if (duplicates) skipped["شماره تکراری"] = duplicates;
+  }
   const candidates = unique.length;
   const targets = unique.slice(0, limit);
   const reorderPattern = configuredPatterns().some((pattern) => pattern.key === "followup");
@@ -271,5 +286,5 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     patternAllowed: reorderPattern && (target.kind === "reorder" || target.kind === "winback"),
   }));
 
-  return { items, candidates, skipped, failed: data.failed, scoreById };
+  return { items, candidates, skipped, unavailableReason, scoreById };
 }

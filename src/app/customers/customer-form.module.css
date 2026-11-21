@@ -305,3 +305,16 @@
     width: 100%;
   }
 }
+
+.formCard + .formCard { margin-top: 18px; }
+
+.grid fieldset {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.grid select[multiple] { min-height: 96px; }
