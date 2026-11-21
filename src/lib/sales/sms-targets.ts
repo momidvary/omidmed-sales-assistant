@@ -186,8 +186,12 @@ export function scoreSmsTarget(
   const timing = signals.timing === undefined ? summaryTiming(customer) : signals.timing;
   const timed = timing ? timingSignal(timing) : null;
   if (timing && timed) {
+    // A late order for one item can coexist with a recent purchase of another.
+    const recentlyBought = customer.days_since_last_purchase != null &&
+      numeric(customer.days_since_last_purchase) < 2 * timing.intervalDays;
+    const kind = timed.kind === "winback" && timing.basis === "product" && recentlyBought ? "reorder" : timed.kind;
     score += timed.points;
-    triggers.add(timed.kind);
+    triggers.add(kind);
     // Win-back is about the customer, not one product: say how long they
     // have not bought anything.
     const silentDays =
@@ -195,7 +199,7 @@ export function scoreSmsTarget(
         ? timing.daysSinceLast
         : Math.round(numeric(customer.days_since_last_purchase));
     reasons.push(
-      timed.kind === "winback"
+      kind === "winback"
         ? `${persianNumber.format(silentDays)} روز است هیچ خریدی نکرده؛ معمولاً هر حدود ${persianNumber.format(
             timing.intervalDays,
           )} روز سفارش می‌داد`

@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+import { isReorderUnit } from "@/lib/sales/reorder-unit";
+
 const validStatuses = new Set(["active", "inactive", "prospect", "lost"]);
 const validPriorities = new Set(["low", "normal", "high", "vip"]);
 const validLeadStages = new Set([
@@ -233,6 +235,24 @@ export async function updateCustomer(formData: FormData) {
   revalidatePath("/customers");
   revalidatePath(`/customers/${customerId}`);
   redirect(`/customers/${customerId}/manage?saved=1`);
+}
+
+export async function saveReorderUnit(formData: FormData) {
+  const id = clean(formData.get("customer_id"), 80);
+  if (!/^[0-9a-f-]{36}$/i.test(id)) redirect("/customers");
+  const path = `/customers/${id}/manage`;
+  let unit: unknown;
+  try {
+    unit = JSON.parse(String(formData.get("reorder_unit") ?? ""));
+  } catch {
+    redirect(`${path}?error=unit`);
+  }
+  if (unit !== null && !isReorderUnit(unit)) redirect(`${path}?error=unit`);
+  const supabase = await createClient();
+  const { error } = await supabase.from("customers").update({ reorder_unit: unit }).eq("id", id).select("id").single();
+  if (error) redirect(`${path}?error=save`);
+  for (const page of [path, "/", "/sms/today"]) revalidatePath(page);
+  redirect(`${path}?saved=1`);
 }
 
 export async function archiveCustomer(formData: FormData) {

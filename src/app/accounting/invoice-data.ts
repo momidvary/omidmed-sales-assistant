@@ -1,6 +1,6 @@
 import { settlementState, type OpenInvoice, type SettlementState } from "@/lib/bank/matching";
 
-import { readAll, type Supabase } from "./shared";
+import { readAll, type Supabase } from "./query";
 
 export type InvoiceRow = {
   id: string;

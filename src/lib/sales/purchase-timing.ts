@@ -7,7 +7,9 @@
 // - purchase cycle: the median gap between purchase days, which one unusual
 //   gap does not distort the way an average does.
 
-import { isServiceLine } from "@/lib/products/service-lines";
+import { tehranDateKey } from "@/lib/finance/metrics";
+import { identifyProducts, unitOrders, type ItemPurchase, type ReorderUnit } from "./reorder-unit";
+export type { ItemPurchase } from "./reorder-unit";
 
 const DAY_MS = 86_400_000;
 const MIN_INTERVAL_DAYS = 7;
@@ -35,6 +37,9 @@ export type NeedPrediction = {
   regular: boolean;
   /** Product the prediction is about (product basis). */
   product: string | null;
+  intervals?: number;
+  errorDays?: number | null;
+  leadDays?: number;
 };
 
 function dayIndex(date: string) {
@@ -66,45 +71,65 @@ export function purchaseCycle(invoiceDates: string[]) {
   };
 }
 
-export type ItemPurchase = { date: string; product: string; quantity: number };
+type Order = [day: number, quantity: number];
 
-/**
- * Earliest predicted run-out over the products bought on at least two days.
- * Usage rate = quantity bought before the last purchase / days it covered;
- * the last purchase lasts its quantity / rate.
- *
- * A product whose run-out date passed before the customer's latest purchase
- * is skipped: they ordered again without it, so they no longer get it from
- * us (or still have stock), and it says nothing about when they need us.
- */
+function intervalFor(orders: Order[]) {
+  const quantity = orders[orders.length - 1][1];
+  const same: number[] = [];
+  const scaled: number[] = [];
+  for (let i = 1; i < orders.length; i++) {
+    const [day, previousQuantity] = orders[i - 1];
+    const gap = orders[i][0] - day;
+    if (previousQuantity === quantity) same.push(gap);
+    scaled.push(gap * quantity / previousQuantity);
+  }
+  const gaps = same.length >= 2 ? same : scaled;
+  const typical = median(gaps);
+  return {
+    intervalDays: clampInterval(typical),
+    intervals: gaps.length,
+    regular: gaps.length >= 2 && median(gaps.map(gap => Math.abs(gap - typical))) <= typical * REGULAR_SPREAD,
+  };
+}
+
+function pastError(orders: Order[]) {
+  const errors: number[] = [];
+  // Replay recent completed intervals using only information available at each order.
+  for (let i = Math.max(2, orders.length - 8); i < orders.length; i++) {
+    const estimate = intervalFor(orders.slice(0, i));
+    errors.push(Math.abs(estimate.intervalDays - (orders[i][0] - orders[i - 1][0])));
+  }
+  return errors.length >= 2 ? Math.round(median(errors)) : null;
+}
+
 export function productRunOut(items: ItemPurchase[], lastPurchaseDate?: string) {
   const byProduct = new Map<string, Map<number, number>>();
-  for (const item of items) {
-    const name = item.product.replace(/\s+/g, " ").trim();
-    if (!name || !(item.quantity > 0) || isServiceLine(name)) continue;
-    const days = byProduct.get(name) ?? new Map<number, number>();
+  const labels = new Map<string, { date: string; name: string }>();
+  for (const item of identifyProducts(items)) {
+    const days = byProduct.get(item.key) ?? new Map<number, number>();
     const day = dayIndex(item.date);
     days.set(day, (days.get(day) ?? 0) + item.quantity);
-    byProduct.set(name, days);
+    byProduct.set(item.key, days);
+    const latest = labels.get(item.key);
+    if (!latest || latest.date <= item.date) {
+      const name = !item.legacyKey && item.articleCode ? `${item.product} (${item.articleCode})` : item.product;
+      labels.set(item.key, { date: item.date, name });
+    }
   }
 
-  const lastPurchase = Math.max(
-    ...items.map((item) => dayIndex(item.date)),
-    ...(lastPurchaseDate ? [dayIndex(lastPurchaseDate)] : []),
-  );
-  let best: { product: string; lastDay: number; intervalDays: number; purchases: number } | null = null;
+  const lastPurchase = items.reduce((last, item) => Math.max(last, dayIndex(item.date)),
+    lastPurchaseDate ? dayIndex(lastPurchaseDate) : -Infinity);
+  let best: { product: string; lastDay: number; intervalDays: number; purchases: number; regular: boolean; intervals: number; orders: Order[] } | null = null;
   for (const [product, days] of byProduct) {
     const purchases = [...days.entries()].sort((a, b) => a[0] - b[0]);
     if (purchases.length < 2) continue;
-    const [lastDay, lastQuantity] = purchases[purchases.length - 1];
+    const [lastDay] = purchases[purchases.length - 1];
     if (lastPurchase - lastDay > STALE_PRODUCT_DAYS) continue;
-    const span = lastDay - purchases[0][0];
-    const usedBeforeLast = purchases.slice(0, -1).reduce((sum, [, quantity]) => sum + quantity, 0);
-    if (span <= 0 || usedBeforeLast <= 0) continue;
-    const intervalDays = clampInterval(lastQuantity / (usedBeforeLast / span));
+    const estimate = intervalFor(purchases);
+    const { intervalDays } = estimate;
     const grace = Math.max(MIN_INTERVAL_DAYS, Math.round(intervalDays * RUN_OUT_GRACE));
     if (lastDay + intervalDays + grace < lastPurchase) continue;
-    const candidate = { product, lastDay, intervalDays, purchases: purchases.length };
+    const candidate = { product: labels.get(product)!.name, lastDay, ...estimate, purchases: purchases.length, orders: purchases };
     if (!best) {
       best = candidate;
       continue;
@@ -124,13 +149,16 @@ export function predictNeed(input: {
   invoiceDates: string[];
   items: ItemPurchase[];
   now: Date;
+  unit?: ReorderUnit | null;
 }): NeedPrediction | null {
-  if (!input.invoiceDates.length) return null;
-  const today = Math.floor(input.now.getTime() / DAY_MS);
-  const lastDay = Math.max(...input.invoiceDates.map(dayIndex));
-  const cycle = purchaseCycle(input.invoiceDates);
-  const lastDate = input.invoiceDates.reduce((latest, date) => (date > latest ? date : latest));
-  const runOut = input.items.length ? productRunOut(input.items, lastDate) : null;
+  const asOf = tehranDateKey(input.now);
+  const invoiceDates = input.invoiceDates.filter(date => date <= asOf);
+  const items = input.items.filter(item => item.date <= asOf);
+  if (!invoiceDates.length) return null;
+  const today = dayIndex(asOf);
+  const lastDate = invoiceDates.reduce((latest, date) => date > latest ? date : latest);
+  const lastDay = dayIndex(lastDate);
+  const cycle = purchaseCycle(invoiceDates);
 
   const build = (basis: NeedBasis, fromDay: number, intervalDays: number, regular: boolean, product: string | null) => {
     const daysSinceLast = today - fromDay;
@@ -145,10 +173,27 @@ export function predictNeed(input: {
     };
   };
 
+  if (input.unit) {
+    const quantities = unitOrders(identifyProducts(items), input.unit);
+    const orders: Order[] = [...quantities].map(([date, qty]): Order => [dayIndex(date), qty]).sort((a, b) => a[0] - b[0]);
+    if (orders.length < 2) return null;
+    const estimate = intervalFor(orders);
+    return {
+      ...build("product", orders[orders.length - 1][0], estimate.intervalDays, estimate.regular, input.unit.label),
+      intervals: estimate.intervals,
+      errorDays: pastError(orders),
+      leadDays: Math.min(input.unit.leadDays ?? 7, estimate.intervalDays - 1),
+    };
+  }
+  const runOut = items.length ? productRunOut(items, lastDate) : null;
   // A product bought three or more times is the most specific signal; one
   // bought twice still beats a cycle built from a single gap.
   if (runOut && (runOut.purchases >= 3 || !cycle || cycle.purchases < 3)) {
-    return build("product", runOut.lastDay, runOut.intervalDays, runOut.purchases >= 3, runOut.product);
+    return {
+      ...build("product", runOut.lastDay, runOut.intervalDays, runOut.regular, runOut.product),
+      intervals: runOut.intervals,
+      errorDays: pastError(runOut.orders),
+    };
   }
   if (cycle) return build("cycle", lastDay, cycle.medianDays, cycle.regular, null);
   return build("single", lastDay, SINGLE_PURCHASE_DAYS, false, null);
@@ -161,7 +206,8 @@ export function predictNeed(input: {
  */
 export function timingSignal(prediction: NeedPrediction) {
   const { progress, basis, regular } = prediction;
-  if (progress < 0.85) return null;
+  const tooEarly = prediction.leadDays == null ? progress < 0.85 : prediction.daysToDue > prediction.leadDays;
+  if (tooEarly) return null;
   const confidence = basis === "single" ? 0.6 : regular ? 1 : 0.75;
   if (progress >= 2 && basis !== "single") return { kind: "winback" as const, points: Math.round(30 * confidence) };
   const points = progress < 1 ? 35 : progress < 1.5 ? 30 : 22;
@@ -180,12 +226,14 @@ export function timingReason(prediction: NeedPrediction) {
         ? "همین روزها"
         : `حدود ${persianNumber.format(-daysToDue)} روز پیش`;
   if (basis === "product") {
-    return `بر اساس مقدار خریدهای قبلی، ${product} او ${when} تمام ${daysToDue > 0 ? "می‌شود" : "شده"}`;
+    const error = prediction.errorDays == null ? "" : `؛ میانهٔ خطای پیش‌بینی‌های قبلی ${persianNumber.format(prediction.errorDays)} روز`;
+    const evidence = prediction.intervals ? ` (بر اساس ${persianNumber.format(prediction.intervals)} فاصلهٔ خرید)` : "";
+    return `موعد تقریبی سفارش ${product} ${when}${evidence}${error}`;
   }
   if (basis === "cycle") {
     return `${persianNumber.format(daysSinceLast)} روز از آخرین خرید گذشته؛ معمولاً هر ${persianNumber.format(
       intervalDays,
     )} روز خرید می‌کند${regular ? " (منظم)" : ""}`;
   }
-  return `${persianNumber.format(daysSinceLast)} روز از تنها خریدش گذشته`;
+  return `${persianNumber.format(daysSinceLast)} روز از تنها خریدش گذشته (تخمین اولیهٔ ۶۰ روزه)`;
 }
