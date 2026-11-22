@@ -171,19 +171,27 @@ test("today's SMS list backfills after sending and keeps recipients out on the n
     delivery_status: string;
   }> = [];
   let historyReadFails = false;
+  let dismissalReadFails = false;
+  const hidden: Array<{ id: string; phone: string; name: string; daily_sms_hidden_through: string }> = [];
   const supabase = {
     from(table: string) {
-      const rows = table === "customer_crm_summary" ? customers : table === "sms_messages" ? history : [];
+      let rows: unknown[] = table === "customer_crm_summary" ? customers : table === "sms_messages" ? history : [];
       return {
         select() { return this; },
         or() { return this; },
-        gte() { return this; },
+        gte(column: string, date: string) {
+          if (table === "customers" && column === "daily_sms_hidden_through") {
+            rows = hidden.filter(c => c.daily_sms_hidden_through >= date);
+          }
+          return this;
+        },
         in() { return this; },
         not() { return this; },
         order() { return this; },
         limit() { return this; },
         async maybeSingle() { return { data: null, error: null }; },
         async range(from: number, to: number) {
+          if (table === "customers" && dismissalReadFails) return { data: null, error: new Error("read failed") };
           if (table === "sms_messages" && historyReadFails) return { data: null, error: new Error("read failed") };
           return { data: rows.slice(from, to + 1), error: null };
         },
@@ -193,6 +201,29 @@ test("today's SMS list backfills after sending and keeps recipients out on the n
 
   const initial = await loadTodayTargets(supabase, 20, now);
   assert.deepEqual(initial.items.map(({ customerId }) => customerId), customers.slice(0, 20).map(({ id }) => id));
+
+  const { hiddenThrough, dailySmsSendBlock } = await import("../src/lib/sms/daily-dismissals");
+  const nearMidnight = new Date("2026-10-18T21:00:00Z");
+  assert.equal(hiddenThrough("today", nearMidnight), "2026-10-19");
+  assert.equal(hiddenThrough("week", nearMidnight), "2026-10-25");
+  assert.equal(hiddenThrough("month", nearMidnight), "2026-11-17");
+  assert.equal(hiddenThrough("restore", now), null);
+  const nextDay = new Date(now.getTime() + 86_400_000);
+  hidden.push({ ...customers[0], daily_sms_hidden_through: hiddenThrough("today", now)! });
+  const skippedToday = await loadTodayTargets(supabase, 20, now);
+  assert.deepEqual(skippedToday.items.map(t => t.customerId), customers.slice(1, 21).map(c => c.id));
+  assert.equal(skippedToday.dismissed.length, 1);
+  assert.equal((await loadTodayTargets(supabase, 20, nextDay)).items[0].customerId, customers[0].id);
+  hidden[0] = { ...hidden[0], id: "another-holoo-record", phone: "+98 912 000 0000", daily_sms_hidden_through: hiddenThrough("indefinite", now)! };
+  assert.equal((await loadTodayTargets(supabase, 20, nextDay)).items[0].customerId, customers[1].id);
+  assert.equal((await dailySmsSendBlock(supabase, customers[0].id, customers[0].phone))?.status, 409);
+  dismissalReadFails = true;
+  assert.deepEqual((await loadTodayTargets(supabase, 20, now)).items, []);
+  assert.equal((await dailySmsSendBlock(supabase, customers[0].id, customers[0].phone))?.status, 503);
+  dismissalReadFails = false;
+  hidden.pop();
+  assert.deepEqual((await loadTodayTargets(supabase, 20, now)).items, initial.items);
+  assert.equal(await dailySmsSendBlock(supabase, customers[0].id, customers[0].phone), null);
 
   history.push(
     {

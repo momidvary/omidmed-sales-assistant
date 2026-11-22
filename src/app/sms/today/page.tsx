@@ -24,7 +24,7 @@ export default async function TodaySmsPage({
     ? Math.min(MAX_LIMIT, Math.max(DAILY_SMS_TARGETS, requested))
     : DAILY_SMS_TARGETS;
   const supabase = await createClient();
-  const { items, candidates, skipped, unavailableReason } = await loadTodayTargets(supabase, limit);
+  const { items, candidates, skipped, unavailableReason, dismissed } = await loadTodayTargets(supabase, limit);
 
   return (
     <AppShell active="sms-today" title="پیامک‌های امروز" subtitle="مشتری‌هایی که امروز ارزش پیام دادن دارند">
@@ -63,7 +63,7 @@ export default async function TodaySmsPage({
         </p>
       )}
 
-      <TodaySmsList targets={items} unavailableReason={unavailableReason} />
+      <TodaySmsList targets={items} dismissed={dismissed} unavailableReason={unavailableReason} />
 
       {candidates > items.length && limit < MAX_LIMIT ? (
         <Link className={todayStyles.more} href={`/sms/today?limit=${Math.min(MAX_LIMIT, limit + DAILY_SMS_TARGETS)}`}>

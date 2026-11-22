@@ -1,3 +1,4 @@
+import { dailySmsSendBlock } from "@/lib/sms/daily-dismissals";
 import { NextResponse } from "next/server";
 
 import { SETTLEMENT_LABELS, settlementState } from "@/lib/bank/matching";
@@ -105,6 +106,11 @@ export async function POST(request: Request) {
   const mobile = normalizeIranMobile(customer.phone as string | null);
   if (!mobile) {
     return NextResponse.json({ error: "شماره موبایل این مشتری معتبر نیست." }, { status: 400 });
+  }
+
+  if (body.fromDailyList === true) {
+    const block = await dailySmsSendBlock(supabase, customerId, mobile);
+    if (block) return NextResponse.json({ error: block.error }, { status: block.status });
   }
 
   const { data: pending, error: pendingError } = await supabase

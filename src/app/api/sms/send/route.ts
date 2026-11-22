@@ -1,3 +1,4 @@
+import { dailySmsSendBlock } from "@/lib/sms/daily-dismissals";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { addTehranDaysAtTen } from "@/lib/campaigns/constants";
@@ -126,6 +127,11 @@ export async function POST(request: Request) {
       { error: "شماره موبایل معتبر نیست." },
       { status: 400 },
     );
+  }
+
+  if (body.fromDailyList === true) {
+    const block = await dailySmsSendBlock(supabase, customerId, mobile);
+    if (block) return NextResponse.json({ error: block.error }, { status: block.status });
   }
 
   const configError = meliPayamakConfigError();
