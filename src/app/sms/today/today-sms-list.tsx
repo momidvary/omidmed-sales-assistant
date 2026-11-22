@@ -40,6 +40,7 @@ const dismissalChoices: { value: DismissalChoice; label: string }[] = [
 ];
 
 const aiPurpose: Record<string, string> = {
+  first_purchase: "general",
   reorder: "reorder",
   winback: "reorder",
   declining: "reorder",
@@ -119,7 +120,7 @@ export default function TodaySmsList({
   const channelOf = (target: TodayTarget): Channel =>
     // A customer who stopped buying gets the personal "we miss you" text;
     // the reorder pattern ("time to reorder") fits the ones who are due.
-    channelChoice[target.customerId] ?? (target.patternAllowed && target.kind !== "winback" ? "pattern" : "text");
+    target.patternAllowed ? channelChoice[target.customerId] ?? (target.kind === "winback" ? "text" : "pattern") : "text";
   const textOf = (target: TodayTarget) => textEdits[target.customerId] ?? target.draft;
   // Hide immediately while the server recalculates and fills the open slots.
   const visible = targets.filter((target) => !sent.has(target.customerId));

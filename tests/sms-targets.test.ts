@@ -68,6 +68,24 @@ test("value raises the rank of customers who already have a reason", () => {
   assert.deepEqual(rankSmsTargets([small, null, big]).map((target) => target.customer.id), ["c2", "c1"]);
 });
 
+test("a single purchase is a check-in; high spend describes the amount, never the timing", () => {
+  const customer = { ...base, purchase_count: "1", total_sales: 120_000_000, days_since_last_purchase: 600 };
+  const target = scoreSmsTarget(customer, quiet, context)!;
+  assert.equal(target.kind, "first_purchase");
+  assert.equal(target.kindLabel, "پیگیری مشتری تک‌خرید با مبلغ بالا");
+  assert.match(target.reasons.join(" "), /مبلغ تنها فاکتور ۱۲۰٬۰۰۰٬۰۰۰ تومان.*۲۵٪.*مجموع مبلغ خرید/);
+  assert.doesNotMatch(draftSmsText(target.kind, customer.name, null), /موعد|فرا رسیده|سفارش‌های قبلی/);
+  assert.equal(scoreSmsTarget({ ...customer, total_sales: 500 }, quiet, context)?.kindLabel, "پیگیری مشتری تک‌خرید");
+  assert.equal(scoreSmsTarget({ ...customer, days_since_last_purchase: 1 }, quiet, context), null);
+  assert.equal(scoreSmsTarget(customer, { ...quiet, wantsPrice: true }, context)?.kind, "quote");
+  const singleDay = { basis: "single" as const, daysToDue: -3, progress: 1.05, daysSinceLast: 63,
+    intervalDays: 60, regular: false, product: null };
+  assert.equal(scoreSmsTarget({ ...customer, purchase_count: 2 }, { ...quiet, timing: singleDay }, context)?.kindLabel,
+    "پیگیری پس از اولین روز خرید");
+  const stock = { ...singleDay, basis: "stock" as const, leadDays: 7, reorderAt: 5, product: "بسته" };
+  assert.equal(scoreSmsTarget(customer, { ...quiet, timing: stock }, context)?.kind, "reorder");
+});
+
 test("recent SMS or call, lost, archived and no mobile are left out", () => {
   assert.equal(exclusionReason(base, { lastSmsAt: daysAgo(5), lastContactAt: null }, true, now), "پیامک اخیر");
   assert.equal(exclusionReason(base, { lastSmsAt: daysAgo(15), lastContactAt: null }, true, now), null);
@@ -309,5 +327,5 @@ test("SMS greeting: a bare name is addressed as doctor; titles and businesses st
 
   const { readFileSync } = await import("node:fs");
   const list = readFileSync("src/app/sms/today/today-sms-list.tsx", "utf8");
-  assert.match(list, /target\.patternAllowed && target\.kind !== "winback" \? "pattern" : "text"/, "win-back defaults to the personal text");
+  assert.match(list, /target\.patternAllowed \? channelChoice.*target\.kind === "winback" \? "text" : "pattern".*: "text"/, "only eligible rows can use the pattern, and win-back defaults to text");
 });

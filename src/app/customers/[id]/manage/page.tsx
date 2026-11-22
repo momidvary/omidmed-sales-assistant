@@ -118,9 +118,14 @@ export default async function ManageCustomerPage({
   const prediction = predictNeed({ invoiceDates: [...dates.values()], items, unit, now });
   const forecastDate = (offset: number) => new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeZone: "UTC" })
     .format(new Date(Date.parse(today) + offset * 86_400_000));
-  const forecast = prediction ? timingReason(prediction) + " · " + forecastDate(prediction.daysToDue) +
-    (prediction.leadDays === undefined ? "" : " · شروع پیگیری از " + forecastDate(prediction.daysToDue - prediction.leadDays)) :
-    "برای برآورد این الگو به سابقهٔ خرید یا شمارش موجودی بیشتری نیاز است.";
+  let forecast = "برای برآورد این الگو به سابقهٔ خرید یا شمارش موجودی بیشتری نیاز است.";
+  if (prediction) {
+    forecast = timingReason(prediction);
+    if (prediction.basis !== "single") {
+      forecast += " · " + forecastDate(prediction.daysToDue);
+      if (prediction.leadDays !== undefined) forecast += " · شروع پیگیری از " + forecastDate(prediction.daysToDue - prediction.leadDays);
+    }
+  }
   const errorMessage = query.error
     ? errorMessages[query.error] ??
       "عملیات انجام نشد."
