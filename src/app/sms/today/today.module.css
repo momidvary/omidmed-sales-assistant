@@ -264,3 +264,44 @@
   font-weight: 800;
   text-decoration: none;
 }
+
+.dismissMenu,
+.hiddenList {
+  font-size: 14px;
+  color: var(--primary-dark);
+}
+
+.dismissMenu {
+  margin-top: 12px;
+}
+
+.dismissMenu summary,
+.hiddenList summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 750;
+  padding-block: 4px;
+}
+
+.hiddenList {
+  padding: 10px 14px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.hiddenList ul {
+  list-style: none;
+  padding: 0;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.hiddenList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 6px;
+  border-top: 1px solid var(--line);
+}

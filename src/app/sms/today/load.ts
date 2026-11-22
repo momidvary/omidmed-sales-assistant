@@ -1,3 +1,4 @@
+import { loadDailySmsDismissals } from "@/lib/sms/daily-dismissals";
 import { readHistory } from "@/lib/supabase/read-history";
 import { loadUnsettledInvoices } from "@/app/accounting/invoice-data";
 import { latestContactByCustomer } from "@/lib/sales/followup-need";
@@ -41,7 +42,7 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
 async function loadSignals(supabase: Supabase, now: Date) {
   const since = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
   const smsSince = since(WINBACK_COOLDOWN_DAYS);
-  const [customers, invoices, invoiceItems, products, followups, sms, quotes, units, unsettled] = await Promise.all([
+  const [customers, invoices, invoiceItems, products, followups, sms, quotes, units, dismissals, unsettled] = await Promise.all([
     readHistory<TargetCustomer & { last_purchase_at: string | null }>((from, to) =>
       supabase
         .from("customer_crm_summary")
@@ -111,6 +112,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
     readHistory<{ id: string; reorder_unit: ReorderUnit }>((from, to) =>
       supabase.from("customers").select("id,reorder_unit").not("reorder_unit", "is", null).order("id").range(from, to),
     ),
+    loadDailySmsDismissals(supabase, now),
     loadUnsettledInvoices(supabase).catch(() => null),
   ]);
 
@@ -173,6 +175,7 @@ async function loadSignals(supabase: Supabase, now: Date) {
 
   return {
     customers: customers.rows,
+    dismissals,
     failed: customers.error,
     // Before migration 029 every customer uses the automatic product forecast.
     profilesUnavailable: units.error && units.code !== "42703" && units.code !== "PGRST204",
@@ -234,8 +237,10 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
       },
       { ...thresholds, now },
     );
-    const excluded =
-      exclusionReason(customer, signals, Boolean(normalizeIranMobile(customer.phone)), now, target?.kind ?? null) ??
+    const mobile = normalizeIranMobile(customer.phone);
+    const dismissed = data.dismissals.keys.has(customer.id) || (mobile && data.dismissals.keys.has(mobile));
+    const excluded = dismissed ? "کنارگذاشتهٔ شما" :
+      exclusionReason(customer, signals, Boolean(mobile), now, target?.kind ?? null) ??
       (newerTwin(customer) ? "شماره تکراری" : null);
     return { target, excluded };
   });
@@ -255,7 +260,9 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
   });
 
   // A partial history can make a previously messaged customer look eligible.
-  const unavailableReason = data.smsHistoryUnavailable
+  const unavailableReason = data.dismissals.error
+    ? "فهرست مشتری‌های کنارگذاشته‌شده خوانده نشد. دوباره تلاش کنید."
+    : data.smsHistoryUnavailable
     ? "سابقهٔ پیامک‌ها کامل خوانده نشد. فهرست را دوباره به‌روز کنید."
     : data.profilesUnavailable
       ? "تنظیمات الگوی خرید خوانده نشد. وضعیت اتصال و اجرای به‌روزرسانی ۰۲۹ پایگاه داده را بررسی کنید."
@@ -286,5 +293,7 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     patternAllowed: reorderPattern && (target.kind === "reorder" || target.kind === "winback"),
   }));
 
-  return { items, candidates, skipped, unavailableReason, scoreById };
+  return { items, candidates, skipped, unavailableReason, scoreById,
+    dismissed: data.dismissals.error ? [] : data.dismissals.customers.sort((a, b) => a.name.localeCompare(b.name, "fa")),
+  };
 }

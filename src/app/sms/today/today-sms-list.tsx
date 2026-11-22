@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
+import type { DismissalChoice, DismissedCustomer } from "@/lib/sms/daily-dismissals";
+import { setDailySmsDismissal } from "./actions";
 import styles from "./today.module.css";
 
 export type TodayTarget = {
@@ -28,6 +30,14 @@ type AiSuggestion = { title: string; text: string };
 // Same storage key as the poster maker and the profile's pattern buttons.
 const CONTACT_STORAGE_KEY = "omidmed.poster.phones";
 const number = new Intl.NumberFormat("fa-IR");
+
+const hiddenDate = new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium", timeZone: "UTC" });
+const dismissalChoices: { value: DismissalChoice; label: string }[] = [
+  { value: "today", label: "فقط امروز" },
+  { value: "week", label: "۷ روز" },
+  { value: "month", label: "۳۰ روز" },
+  { value: "indefinite", label: "تا وقتی برگردانم" },
+];
 
 const aiPurpose: Record<string, string> = {
   reorder: "reorder",
@@ -67,13 +77,17 @@ async function postJson(url: string, body: unknown) {
 
 export default function TodaySmsList({
   targets,
+  dismissed,
   unavailableReason,
 }: {
   targets: TodayTarget[];
+  dismissed: DismissedCustomer[];
   unavailableReason: string | null;
 }) {
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
+  const [savingDismissal, startDismissal] = useTransition();
+  const [dismissalResult, setDismissalResult] = useState<Result | null>(null);
   const [contact, setContact] = useState("");
   // Only the user's changes are kept here; customers that arrive after a
   // refresh start from their own defaults.
@@ -126,10 +140,51 @@ export default function TodaySmsList({
     </>
   );
 
+  function changeDismissal(id: string, name: string, choice: DismissalChoice) {
+    setDismissalResult(null);
+    startDismissal(async () => {
+      try {
+        const { error } = await setDailySmsDismissal(id, choice);
+        if (error) {
+          setDismissalResult({ ok: false, text: error });
+        } else {
+          const text = choice === "restore" ? `${name} دوباره می‌تواند در پیشنهادها بیاید.` : `${name} از پیشنهادهای پیامک کنار گذاشته شد.`;
+          setDismissalResult({ ok: true, text });
+        }
+      } catch {
+        setDismissalResult({ ok: false, text: "ذخیرهٔ تغییر تأیید نشد. فهرست را به‌روز کنید." });
+      }
+    });
+  }
+
+  const dismissalControls = (
+    <>
+      {savingDismissal && <p className={styles.hint} role="status">در حال به‌روزرسانی پیشنهادها…</p>}
+      {dismissalResult && <p className={dismissalResult.ok ? styles.ok : styles.error} role="status">{dismissalResult.text}</p>}
+      {dismissed.length > 0 && (
+        <details className={styles.hiddenList}>
+          <summary>کنارگذاشته‌های شما ({number.format(dismissed.length)})</summary>
+          <ul>
+            {dismissed.map(customer => (
+              <li key={customer.id}>
+                <span>{customer.name} · {customer.daily_sms_hidden_through === "infinity"
+                  ? "تا بازگرداندن دستی"
+                  : "تا پایان " + hiddenDate.format(new Date(customer.daily_sms_hidden_through))}</span>
+                <button type="button" className={styles.secondary} disabled={savingDismissal || Boolean(busy)}
+                  onClick={() => changeDismissal(customer.id, customer.name, "restore")}>بازگرداندن</button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+
   if (!visible.length) {
     return (
       <div className={styles.wrap}>
         {sendFeedback}
+        {dismissalControls}
         <div className={styles.empty}>
           <h3>{unavailableReason ? "فهرست پیامک در دسترس نیست" : "پیشنهاد دیگری برای پیامک وجود ندارد"}</h3>
           {unavailableReason && <p className={styles.error} role="alert">{unavailableReason}</p>}
@@ -157,6 +212,7 @@ export default function TodaySmsList({
         reply = await postJson("/api/sms/pattern", {
           pattern: "followup",
           customerId: target.customerId,
+          fromDailyList: true,
           values: { name: target.greeting.slice(0, 40), contact: contact.trim() },
           clientRequestId: requestIds.current[target.customerId],
         });
@@ -165,6 +221,7 @@ export default function TodaySmsList({
         if (!text) throw new Error("متن پیامک خالی است.");
         reply = await postJson("/api/sms/send", {
           customerId: target.customerId,
+          fromDailyList: true,
           text,
           source: "customer",
           marketing: true,
@@ -242,12 +299,13 @@ export default function TodaySmsList({
           />
         </label>
         {refreshButton}
-        <button type="button" className={styles.primary} disabled={Boolean(busy) || !pendingSelected} onClick={sendSelected}>
+        <button type="button" className={styles.primary} disabled={savingDismissal || Boolean(busy) || !pendingSelected} onClick={sendSelected}>
           {busy === "all" ? "در حال ارسال…" : `ارسال برای ${number.format(pendingSelected)} نفر انتخاب‌شده`}
         </button>
       </div>
 
       {sendFeedback}
+      {dismissalControls}
 
       {visible.map((target) => {
         const channel = channelOf(target);
@@ -276,6 +334,16 @@ export default function TodaySmsList({
               <span className={styles.kind}>{target.kindLabel}</span>
               <span className={styles.score}>امتیاز {number.format(target.score)}</span>
             </div>
+
+            <details className={styles.dismissMenu}>
+              <summary>کنار گذاشتن از پیشنهادها</summary>
+              <div className={styles.actions}>
+                {dismissalChoices.map(({ value, label }) => (
+                  <button key={value} type="button" className={styles.secondary} disabled={savingDismissal || Boolean(busy)}
+                    onClick={() => changeDismissal(target.customerId, target.name, value)}>{label}</button>
+                ))}
+              </div>
+            </details>
 
             <ul className={styles.reasons}>
               {target.reasons.map((reason) => (
@@ -357,7 +425,7 @@ export default function TodaySmsList({
               <button
                 type="button"
                 className={styles.primary}
-                disabled={Boolean(busy) || Boolean(result?.ok)}
+                disabled={savingDismissal || Boolean(busy) || Boolean(result?.ok)}
                 onClick={() => sendOne(target)}
               >
                 {busy === target.customerId ? "در حال ارسال…" : `ارسال به ${target.phone ?? ""}`}
