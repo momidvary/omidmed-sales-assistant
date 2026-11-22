@@ -64,7 +64,7 @@ test("the best moment is just before the need; a long silence is win-back", () =
   assert.deepEqual(timingSignal({ ...regular, progress: 2.5 }), { kind: "winback", points: 30 });
   // Less certain predictions weigh less.
   assert.deepEqual(timingSignal({ ...regular, regular: false, progress: 0.9 }), { kind: "reorder", points: 26 });
-  assert.equal(timingSignal({ ...regular, basis: "single", progress: 3 })?.kind, "reorder", "one purchase is never win-back");
+  assert.equal(timingSignal({ ...regular, basis: "single", progress: 3 })?.kind, "first_purchase", "one purchase gives a follow-up, not a measured cycle");
 });
 
 test("reasons say what the prediction is based on", () => {

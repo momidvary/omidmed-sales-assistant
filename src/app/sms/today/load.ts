@@ -12,7 +12,6 @@ import {
   salesTrend,
   scoreSmsTarget,
   WINBACK_COOLDOWN_DAYS,
-  TARGET_KIND_LABELS,
   topProducts,
   type TargetCustomer,
 } from "@/lib/sales/sms-targets";
@@ -250,7 +249,7 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
       .filter((entry) => entry.target)
       .map((entry) => [
         entry.target!.customer.id,
-        { score: entry.target!.score, reasons: entry.target!.reasons, kindLabel: TARGET_KIND_LABELS[entry.target!.kind] },
+        { score: entry.target!.score, reasons: entry.target!.reasons, kindLabel: entry.target!.kindLabel },
       ]),
   );
   const scored = ranked.map(({ target, excluded }) => {
@@ -284,7 +283,7 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     greeting: smsGreetingName(target.customer.name),
     phone: target.customer.phone,
     kind: target.kind,
-    kindLabel: TARGET_KIND_LABELS[target.kind],
+    kindLabel: target.kindLabel,
     score: target.score,
     reasons: target.reasons,
     note: target.note,

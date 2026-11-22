@@ -14,7 +14,7 @@ export type { ItemPurchase } from "./reorder-unit";
 const DAY_MS = 86_400_000;
 const MIN_INTERVAL_DAYS = 7;
 const MAX_INTERVAL_DAYS = 365;
-/** A customer with a single purchase is expected back after this many days. */
+/** Reference interval for a first-purchase check-in when no repeat cycle is known. */
 export const SINGLE_PURCHASE_DAYS = 60;
 /** Gaps within this share of the median make a customer "regular". */
 const REGULAR_SPREAD = 0.35;
@@ -257,7 +257,8 @@ export function timingSignal(prediction: NeedPrediction) {
   const confidence = basis === "single" ? 0.6 : regular ? 1 : 0.75;
   if (progress >= 2 && basis !== "single") return { kind: "winback" as const, points: Math.round(30 * confidence) };
   const points = progress < 1 ? 35 : progress < 1.5 ? 30 : 22;
-  return { kind: "reorder" as const, points: Math.round(points * confidence) };
+  const kind = basis === "single" ? "first_purchase" : "reorder";
+  return { kind, points: Math.round(points * confidence) } as const;
 }
 
 const persianNumber = new Intl.NumberFormat("fa-IR");
@@ -284,5 +285,5 @@ export function timingReason(prediction: NeedPrediction) {
       intervalDays,
     )} روز خرید می‌کند${regular ? " (منظم)" : ""}`;
   }
-  return `${persianNumber.format(daysSinceLast)} روز از تنها خریدش گذشته (تخمین اولیهٔ ۶۰ روزه)`;
+  return `${persianNumber.format(daysSinceLast)} روز از اولین روز خرید گذشته است. برای تخمین موعد سفارش بعدی هنوز سابقهٔ تکرار خرید کافی نیست.`;
 }

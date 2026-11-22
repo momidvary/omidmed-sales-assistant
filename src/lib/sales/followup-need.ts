@@ -17,7 +17,7 @@ export type FollowupNeed = {
   days: number | null;
 };
 
-/** A customer with a single invoice is due again after this many days. */
+/** Default time to follow up after a single invoice. */
 export const SINGLE_PURCHASE_FOLLOWUP_DAYS = 60;
 /** A call logged this recently counts as handled, even without a new invoice. */
 export const RECENT_CONTACT_DAYS = 7;
@@ -125,7 +125,7 @@ export function classifyFollowupNeed(
 
   return {
     needsFollowup: false,
-    reason: `حدود ${persianNumber.format(cycle - daysSince)} روز دیگر موعد خرید بعدی است؛ ${cycleText}`,
+    reason: `حدود ${persianNumber.format(cycle - daysSince)} روز دیگر ${purchaseCount === 1 ? "زمان پیگیری خرید اول است" : "موعد خرید بعدی است"}؛ ${cycleText}`,
     days: cycle - daysSince,
   };
 }

@@ -24,7 +24,7 @@ export const WINBACK_COOLDOWN_DAYS = 60;
 const DAY_MS = 86_400_000;
 const TREND_WINDOW_DAYS = 182;
 
-export type TargetKind = "scheduled" | "quote" | "winback" | "declining" | "reorder";
+export type TargetKind = "scheduled" | "quote" | "winback" | "declining" | "reorder" | "first_purchase";
 
 export type TargetCustomer = {
   id: string;
@@ -113,6 +113,7 @@ export function rfmScores(
 export type SmsTarget = {
   customer: TargetCustomer;
   kind: TargetKind;
+  kindLabel: string;
   score: number;
   reasons: string[];
   topProduct: string | null;
@@ -125,6 +126,7 @@ export const TARGET_KIND_LABELS: Record<TargetKind, string> = {
   winback: "در خطر از دست رفتن",
   declining: "خریدش کم شده",
   reorder: "موعد خرید مجدد",
+  first_purchase: "پیگیری پس از اولین روز خرید",
 };
 
 const persianNumber = new Intl.NumberFormat("fa-IR");
@@ -236,6 +238,11 @@ export function scoreSmsTarget(
   // 5) Customer value: RFM over the last 12 months when the customer bought
   // in that time, the lifetime total otherwise (a big past customer still
   // matters for win-back).
+  const oneInvoice = numeric(customer.purchase_count) === 1;
+  const totalSales = numeric(customer.total_sales);
+  let topShare: number | null = null;
+  if (totalSales > 0 && totalSales >= context.topTenSales) topShare = 10;
+  else if (totalSales > 0 && totalSales >= context.topQuarterSales) topShare = 25;
   const rfm = signals.rfm;
   if (rfm) {
     const points = (rank: number) => (rank >= 5 ? 10 : rank >= 4 ? 7 : rank >= 3 ? 4 : 0);
@@ -247,35 +254,37 @@ export function scoreSmsTarget(
         }٪ پرتکرار)`,
       );
     }
-    if (rfm.monetaryRank >= 4) {
+    if (rfm.monetaryRank >= 4 && !(oneInvoice && topShare)) {
       reasons.push(
         `میانگین هر سفارشش ${persianNumber.format(Math.round(rfm.averageOrder))} تومان است (جزو ${
           rfm.monetaryRank >= 5 ? "۲۰" : "۴۰"
         }٪ بالا)`,
       );
     }
-  } else {
-    const totalSales = numeric(customer.total_sales);
-    if (totalSales > 0 && totalSales >= context.topTenSales) {
-      score += 20;
-      reasons.push("جزو ۱۰٪ مشتریان با بیشترین خرید است");
-    } else if (totalSales > 0 && totalSales >= context.topQuarterSales) {
-      score += 12;
-      reasons.push("جزو ۲۵٪ مشتریان با بیشترین خرید است");
-    }
+  } else if (topShare) {
+    score += topShare === 10 ? 20 : 12;
+  }
+  if (topShare && (!rfm || oneInvoice)) {
+    const metric = oneInvoice ? "مبلغ تنها فاکتور" : "جمع مبلغ خریدها";
+    reasons.push(`${metric} ${persianNumber.format(totalSales)} تومان است (جزو ${persianNumber.format(topShare)}٪ بالای مشتریان از نظر مجموع مبلغ خرید)`);
   }
   if (customer.priority === "vip") score += 15;
   else if (customer.priority === "high") score += 10;
 
   // The message follows the most specific reason: being due now beats a
   // general drop in sales.
-  const kind: TargetKind = (["scheduled", "quote", "reorder", "winback", "declining"] as const).find((item) =>
+  const kind: TargetKind = (["scheduled", "quote", "first_purchase", "reorder", "winback", "declining"] as const).find((item) =>
     triggers.has(item),
   )!;
 
+  let kindLabel = TARGET_KIND_LABELS[kind];
+  if (kind === "first_purchase" && oneInvoice) {
+    kindLabel = topShare ? "پیگیری مشتری تک‌خرید با مبلغ بالا" : "پیگیری مشتری تک‌خرید";
+  }
   return {
     customer,
     kind,
+    kindLabel,
     score: Math.round(score),
     reasons,
     // The product about to run out is the best thing to name in the message.
@@ -368,6 +377,7 @@ export function draftSmsText(kind: TargetKind, name: string, product: string | n
   const who = `${smsGreetingName(name)} گرامی`;
   const item = productPhrase(product);
   const texts: Record<TargetKind, string> = {
+    first_purchase: `${who}، از خریدتان از امیدمد سپاسگزاریم. اگر برای سفارش بعدی به راهنمایی یا قیمت روز نیاز دارید، با {contact} در تماس باشید.`,
     reorder: `${who}، بر اساس سفارش‌های قبلی، زمان تهیه مجدد ${item} شما فرا رسیده است. برای ثبت سفارش و قیمت روز با {contact} تماس بگیرید.`,
     winback: `${who}، مدتی است از امیدمد سفارشی نداشته‌اید. اگر به ${item} یا سایر لوازم مصرفی فیزیوتراپی نیاز دارید، برای قیمت روز با {contact} تماس بگیرید.`,
     declining: `${who}، از همراهی شما با امیدمد سپاسگزاریم. برای تهیه ${item} و اطلاع از قیمت روز محصولات با {contact} در تماس باشید.`,
