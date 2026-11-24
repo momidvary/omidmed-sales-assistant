@@ -94,6 +94,24 @@ test("recent SMS or call, lost, archived and no mobile are left out", () => {
   assert.equal(exclusionReason(base, { lastSmsAt: null, lastContactAt: null }, false, now), "موبایل ندارد");
 });
 
+test("a spending drop waits for the product window without suppressing an explicit follow-up", () => {
+  const signals = { ...quiet, recentSales: 20, previousSales: 100 };
+  const timing = { basis: "product" as const, intervalDays: 100, daysSinceLast: 70, progress: 0.7,
+    daysToDue: 30, product: "پک", regular: true };
+  const decline = scoreSmsTarget(base, { ...signals, timing }, context)!;
+  assert.equal(decline.kind, "declining");
+  assert.equal(exclusionReason(base, signals, true, now, decline.kind, timing), "پیش از بازهٔ پیگیری کالا");
+  const stock = { ...timing, basis: "stock" as const, leadDays: 7 };
+  assert.equal(exclusionReason(base, signals, true, now, decline.kind, stock), "پیش از بازهٔ پیگیری کالا");
+  const due = { ...stock, daysToDue: 7, reorderAt: 10 };
+  assert.equal(scoreSmsTarget(base, { ...signals, timing: due }, context)?.kind, "reorder");
+  assert.equal(exclusionReason(base, signals, true, now, "reorder", due), null);
+  for (const kind of ["scheduled", "quote"] as const) {
+    assert.equal(exclusionReason(base, signals, true, now, kind, timing), null);
+  }
+  assert.equal(exclusionReason(base, signals, true, now, "declining", null), null);
+});
+
 test("Holoo debt plays no part; a bank-confirmed unpaid invoice is only a note", () => {
   const due = { ...base, days_since_last_purchase: 36 };
   const plain = scoreSmsTarget(due, quiet, context)!;

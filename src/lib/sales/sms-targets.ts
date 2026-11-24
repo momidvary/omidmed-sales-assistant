@@ -124,7 +124,7 @@ export const TARGET_KIND_LABELS: Record<TargetKind, string> = {
   scheduled: "پیگیری تعیین‌شده",
   quote: "قیمت گرفته، خرید نکرده",
   winback: "در خطر از دست رفتن",
-  declining: "خریدش کم شده",
+  declining: "افت مبلغ خرید",
   reorder: "موعد خرید مجدد",
   first_purchase: "پیگیری پس از اولین روز خرید",
 };
@@ -147,6 +147,7 @@ export function exclusionReason(
   hasMobile: boolean,
   now: Date,
   kind: TargetKind | null = null,
+  timing?: NeedPrediction | null,
 ) {
   if (customer.status === "lost") return "از دست رفته";
   if (customer.archived_at) return "بایگانی";
@@ -154,6 +155,10 @@ export function exclusionReason(
   if (daysSince(signals.lastSmsAt, now) < SMS_COOLDOWN_DAYS) return "پیامک اخیر";
   if (kind === "winback" && daysSince(signals.lastSmsAt, now) < WINBACK_COOLDOWN_DAYS) return "پیامک اخیر";
   if (daysSince(signals.lastContactAt, now) < RECENT_CONTACT_DAYS) return "تماس اخیر";
+  // A spending drop alone should not prompt a sales SMS ahead of a known product window.
+  if (kind === "declining" && (timing?.basis === "product" || timing?.basis === "stock") && !timingSignal(timing)) {
+    return "پیش از بازهٔ پیگیری کالا";
+  }
   return null;
 }
 
@@ -215,7 +220,7 @@ export function scoreSmsTarget(
     const drop = Math.round((1 - signals.recentSales / signals.previousSales) * 100);
     score += 15;
     triggers.add("declining");
-    reasons.push(`خرید ۶ ماه اخیرش ${persianNumber.format(drop)}٪ کمتر از ۶ ماه قبل است`);
+    reasons.push(`مبلغ خرید ۶ ماه اخیرش ${persianNumber.format(drop)}٪ کمتر از ۶ ماه قبل است`);
   }
 
   // 3) Asked for a price and has not bought since.
@@ -380,7 +385,7 @@ export function draftSmsText(kind: TargetKind, name: string, product: string | n
     first_purchase: `${who}، از خریدتان از امیدمد سپاسگزاریم. اگر برای سفارش بعدی به راهنمایی یا قیمت روز نیاز دارید، با {contact} در تماس باشید.`,
     reorder: `${who}، بر اساس سفارش‌های قبلی، زمان تهیه مجدد ${item} شما فرا رسیده است. برای ثبت سفارش و قیمت روز با {contact} تماس بگیرید.`,
     winback: `${who}، مدتی است از امیدمد سفارشی نداشته‌اید. اگر به ${item} یا سایر لوازم مصرفی فیزیوتراپی نیاز دارید، برای قیمت روز با {contact} تماس بگیرید.`,
-    declining: `${who}، از همراهی شما با امیدمد سپاسگزاریم. برای تهیه ${item} و اطلاع از قیمت روز محصولات با {contact} در تماس باشید.`,
+    declining: `${who}، از همراهی شما با امیدمد سپاسگزاریم. اگر برای تأمین اقلام مصرفی یا دریافت قیمت روز به کمک نیاز دارید، با {contact} در تماس باشید.`,
     quote: `${who}، اگر درباره قیمتی که اعلام شد سؤالی دارید یا آماده ثبت سفارش هستید، با {contact} تماس بگیرید.`,
     scheduled: `${who}، برای تهیه ${item} و سایر لوازم مصرفی فیزیوتراپی در خدمت شما هستیم. شماره تماس: {contact}`,
   };

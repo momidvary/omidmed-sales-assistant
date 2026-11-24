@@ -239,7 +239,7 @@ export async function loadTodayTargets(supabase: Supabase, limit = DAILY_SMS_TAR
     const mobile = normalizeIranMobile(customer.phone);
     const dismissed = data.dismissals.keys.has(customer.id) || (mobile && data.dismissals.keys.has(mobile));
     const excluded = dismissed ? "کنارگذاشتهٔ شما" :
-      exclusionReason(customer, signals, Boolean(mobile), now, target?.kind ?? null) ??
+      exclusionReason(customer, signals, Boolean(mobile), now, target?.kind ?? null, data.timing.get(customer.id)) ??
       (newerTwin(customer) ? "شماره تکراری" : null);
     return { target, excluded };
   });
